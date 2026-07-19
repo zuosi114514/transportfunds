@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>车费分摊</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=DM+Sans:opsz,wght@9..40,500;9..40,700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="loginScreen" class="login-screen">
+    <div class="login-card">
+      <h1>车费分摊</h1>
+      <p>输入共享口令后，大家都能看到并修改同一份车费数据。</p>
+      <label>
+        共享口令
+        <input type="password" id="passwordInput" placeholder="请输入口令" autocomplete="current-password" />
+      </label>
+      <button class="btn btn-primary" id="loginBtn" type="button">进入</button>
+      <p class="login-error" id="loginError"></p>
+    </div>
+  </div>
+
+  <div id="appScreen" class="wrap hidden">
+    <header class="topbar">
+      <div>
+        <h1>车费分摊</h1>
+        <p>勾选每天谁坐了车，自动按人数均摊并统计每人应付总额。</p>
+      </div>
+      <div class="topbar-actions">
+        <span class="sync-badge" id="syncBadge">未连接</span>
+        <button class="btn btn-ghost btn-small" id="logoutBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel panel-summary">
+        <h2>每人应付</h2>
+        <div class="summary" id="summary"></div>
+      </aside>
+
+      <section class="panel panel-trips">
+        <h2>行程记录</h2>
+
+        <div class="people" id="peopleList"></div>
+        <div class="row">
+          <input type="text" id="newPerson" placeholder="添加成员，如：黄" maxlength="8" />
+          <button class="btn btn-ghost" id="addPersonBtn" type="button">添加</button>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            日期
+            <input type="date" id="tripDate" />
+          </label>
+          <label>
+            车费（元）
+            <input type="number" id="tripAmount" min="0" step="0.01" inputmode="decimal" placeholder="如 16.98" />
+          </label>
+          <button class="btn btn-primary" id="addTripBtn" type="button">添加行程</button>
+        </div>
+
+        <div class="checks" id="rideChecks"></div>
+        <p class="hint">勾选本次坐车的人；车费会均摊给勾选的人。数据实时同步到云端，所有人共享。</p>
+
+        <div class="trips" id="tripsList"></div>
+        <div class="toolbar">
+          <button class="btn btn-ghost" id="loadDemoBtn" type="button">载入示例</button>
+          <button class="btn btn-ghost" id="clearBtn" type="button">清空全部</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
