@@ -24,7 +24,13 @@ const demoTrips = [
 const state = {
   people: ["黄", "张", "吴", "陈"],
   trips: [],
+  history: [],
 };
+
+// History snapshots: keep at most MAX_HISTORY_ENTRIES; when exceeded, drop the oldest half.
+// Also guard total payload size so we stay well within Supabase free-tier limits.
+const MAX_HISTORY_ENTRIES = 30;
+const MAX_PAYLOAD_BYTES = 200 * 1024; // 200KB safety ceiling for the whole row
 
 let supabase = null;
 let saveTimer = null;
@@ -51,6 +57,7 @@ const els = {
   addTripBtn: document.getElementById("addTripBtn"),
   loadDemoBtn: document.getElementById("loadDemoBtn"),
   clearBtn: document.getElementById("clearBtn"),
+  historyList: document.getElementById("historyList"),
 };
 
 function money(n) {
@@ -227,19 +234,100 @@ function render() {
   renderPeople();
   renderTrips();
   renderSummary();
+  renderHistory();
+}
+
+// Build a compact snapshot of the current settlement state for the history archive.
+function buildSnapshot() {
+  const { totals, counts } = calcTotals();
+  const grand = Object.values(totals).reduce((a, b) => a + b, 0);
+  const names = allKnownNames();
+  const dates = state.trips.map((t) => t.date).filter(Boolean).sort();
+  return {
+    clearedAt: new Date().toISOString(),
+    people: [...state.people],
+    tripCount: state.trips.length,
+    grandTotal: Number(grand.toFixed(2)),
+    dateRange: dates.length ? { from: dates[0], to: dates[dates.length - 1] } : null,
+    totals: Object.fromEntries(names.map((p) => [p, Number((totals[p] || 0).toFixed(2))])),
+    counts: Object.fromEntries(names.map((p) => [p, counts[p] || 0])),
+  };
+}
+
+// Keep history within size limits: cap entry count and total payload bytes.
+function trimHistory() {
+  if (state.history.length > MAX_HISTORY_ENTRIES) {
+    state.history = state.history.slice(Math.floor(state.history.length / 2));
+  }
+  // Also enforce a byte ceiling — drop oldest half until we fit.
+  let guard = 0;
+  while (state.history.length > 1 && JSON.stringify(state).length > MAX_PAYLOAD_BYTES && guard < 20) {
+    state.history = state.history.slice(Math.floor(state.history.length / 2));
+    guard++;
+  }
+}
+
+function formatSnapshotDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day} ${hh}:${mm}`;
+}
+
+function renderHistory() {
+  if (!els.historyList) return;
+  if (!state.history.length) {
+    els.historyList.innerHTML = `<div class="empty">暂无历史结算记录。管理员清空数据时会自动保存一份结算快照。</div>`;
+    return;
+  }
+  const sorted = [...state.history].sort((a, b) => (b.clearedAt || "").localeCompare(a.clearedAt || ""));
+  els.historyList.innerHTML = sorted
+    .map((snap) => {
+      const names = Object.keys(snap.totals || {});
+      const rows = names
+        .map(
+          (p) =>
+            `<span class="hist-person"><b>${p}</b> ¥${money(snap.totals[p])}<i>${snap.counts[p] || 0}次</i></span>`
+        )
+        .join("");
+      const range = snap.dateRange
+        ? `${formatDateLabel(snap.dateRange.from)} ~ ${formatDateLabel(snap.dateRange.to)}`
+        : "无日期";
+      return `
+        <article class="hist-item">
+          <div class="hist-top">
+            <span class="hist-date">${formatSnapshotDate(snap.clearedAt)}</span>
+            <span class="hist-range">${range} · ${snap.tripCount || 0} 条行程</span>
+          </div>
+          <div class="hist-people">${rows}</div>
+          <div class="hist-total">合计 ¥${money(snap.grandTotal)}</div>
+        </article>`;
+    })
+    .join("");
 }
 
 function applyRemote(data) {
   state.people = Array.isArray(data.people) ? data.people : [];
   state.trips = Array.isArray(data.trips) ? data.trips : [];
+  // Only overwrite history when the remote row actually carries it.
+  // Older databases (pre-migration) have no `history` column, so we keep
+  // the in-memory snapshot visible for the rest of the session.
+  if (Array.isArray(data.history)) {
+    state.history = data.history;
+  }
   render();
 }
 
 async function loadFromCloud() {
   setSync("busy", "同步中…");
+  // Select all columns so we still work before the `history` migration is applied.
   const { data, error } = await supabase
     .from("app_state")
-    .select("people, trips")
+    .select("*")
     .eq("id", 1)
     .maybeSingle();
 
@@ -251,6 +339,7 @@ async function loadFromCloud() {
   if (!data) {
     state.people = ["黄", "张", "吴", "陈"];
     state.trips = demoTrips.map((t) => ({ ...t, riders: [...t.riders] }));
+    state.history = [];
     await persistNow();
   } else {
     applyRemote(data);
@@ -268,16 +357,28 @@ async function persistNow() {
     id: 1,
     people: state.people,
     trips: state.trips,
+    history: state.history,
     updated_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from("app_state").upsert(payload);
+  let { error } = await supabase.from("app_state").upsert(payload);
   saving = false;
 
   if (error) {
-    setSync("err", "保存失败");
-    console.error(error);
-    return;
+    // Fallback: older databases may not have the `history` column yet.
+    // Retry without it so the app keeps working until the migration is applied.
+    const fallback = {
+      id: 1,
+      people: state.people,
+      trips: state.trips,
+      updated_at: new Date().toISOString(),
+    };
+    const retry = await supabase.from("app_state").upsert(fallback);
+    if (retry.error) {
+      setSync("err", "保存失败");
+      console.error(retry.error);
+      return;
+    }
   }
 
   setSync("ok", "已同步");
@@ -428,11 +529,19 @@ els.addTripBtn.addEventListener("click", addTrip);
 els.loadDemoBtn.addEventListener("click", loadDemo);
 els.clearBtn.addEventListener("click", () => {
   if (!assertAdmin()) return;
-  if (confirm("确定清空全部行程与成员？此操作会同步到所有人。")) {
-    state.people = [];
-    state.trips = [];
-    scheduleSave();
+  const hasData = state.trips.length > 0 || state.people.length > 0;
+  const msg = hasData
+    ? "确定清空全部行程与成员？\n本次结算会自动存入历史记录（含日期、每人应付、行程数等），此操作会同步到所有人。"
+    : "确定清空全部？当前没有行程数据。";
+  if (!confirm(msg)) return;
+  if (hasData) {
+    const snap = buildSnapshot();
+    state.history.push(snap);
+    trimHistory();
   }
+  state.people = [];
+  state.trips = [];
+  scheduleSave();
 });
 
 // Remove person: only removes from the people list, does NOT touch existing trips

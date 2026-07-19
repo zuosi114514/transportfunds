@@ -63,8 +63,17 @@ npm run deploy
 |------|------|
 | 平时增删行程 | 用管理员口令登录后直接在网页上操作，会自动同步 |
 | 恢复初始数据 | 管理员登录后点「重置为初始数据」 |
-| 清空全部 | 管理员登录后点「清空全部」 |
+| 清空全部 | 管理员登录后点「清空全部」（会自动保存一份历史结算快照） |
+| 查看历史结算 | 网页底部「历史结算记录」区域，所有用户可见 |
 | 后台查看原始数据 | [Supabase Dashboard](https://supabase.com/dashboard/project/nreyuviaobqhobppotfa) → **Table Editor** → `app_state` |
+
+> **首次升级到带历史记录的版本**：需在 Supabase SQL Editor 执行一次以下语句为 `app_state` 表添加 `history` 列（已执行过可跳过）：
+>
+> ```sql
+> alter table public.app_state add column if not exists history jsonb not null default '[]'::jsonb;
+> ```
+>
+> 执行前历史记录只在当前会话内可见；执行后才会持久化到云端，所有人都能看到。
 
 ### 5. 暂时下线网站
 
