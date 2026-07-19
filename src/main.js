@@ -25,6 +25,7 @@ const state = {
   people: ["黄", "张", "吴", "陈"],
   trips: [],
   history: [],
+  lastAutoSettle: "", // YYYY-MM of the last automatic monthly settlement
 };
 
 // History snapshots: keep at most MAX_HISTORY_ENTRIES; when exceeded, drop the oldest half.
@@ -319,6 +320,9 @@ function applyRemote(data) {
   if (Array.isArray(data.history)) {
     state.history = data.history;
   }
+  if (typeof data.last_auto_settle === "string") {
+    state.lastAutoSettle = data.last_auto_settle;
+  }
   render();
 }
 
@@ -358,6 +362,7 @@ async function persistNow() {
     people: state.people,
     trips: state.trips,
     history: state.history,
+    last_auto_settle: state.lastAutoSettle,
     updated_at: new Date().toISOString(),
   };
 
@@ -365,8 +370,7 @@ async function persistNow() {
   saving = false;
 
   if (error) {
-    // Fallback: older databases may not have the `history` column yet.
-    // Retry without it so the app keeps working until the migration is applied.
+    // Fallback: older databases may not have the `history` / `last_auto_settle` columns yet.
     const fallback = {
       id: 1,
       people: state.people,
@@ -422,10 +426,40 @@ async function bootApp() {
   try {
     await loadFromCloud();
     subscribeRealtime();
+    await maybeAutoSettle();
   } catch (err) {
     console.error(err);
     els.summary.innerHTML = `<div class="empty">无法连接 Supabase，请检查环境变量与 schema.sql 是否已执行。</div>`;
   }
+}
+
+// Monthly auto-settle: on or after the 31st of a 31-day month, if we haven't
+// settled yet this month, save a snapshot and clear trips (keep members).
+// Runs client-side on page load; idempotent so multiple users triggering it is fine.
+async function maybeAutoSettle() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-12
+  const day = now.getDate();
+  const daysInMonth = new Date(year, month, 0).getDate();
+
+  // Only settle on months that have a 31st, and only on/after the 31st.
+  if (daysInMonth < 31 || day < 31) return;
+
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  if (state.lastAutoSettle === monthKey) return; // already settled this month
+
+  if (state.trips.length === 0) {
+    // Nothing to settle, but mark as done so we don't keep checking.
+    state.lastAutoSettle = monthKey;
+    await persistNow();
+    return;
+  }
+
+  settleAndClearTrips();
+  state.lastAutoSettle = monthKey;
+  await persistNow();
+  render();
 }
 
 function tryLogin() {
@@ -527,20 +561,25 @@ els.newPerson.addEventListener("keydown", (e) => {
 });
 els.addTripBtn.addEventListener("click", addTrip);
 els.loadDemoBtn.addEventListener("click", loadDemo);
-els.clearBtn.addEventListener("click", () => {
-  if (!assertAdmin()) return;
-  const hasData = state.trips.length > 0 || state.people.length > 0;
-  const msg = hasData
-    ? "确定清空全部行程与成员？\n本次结算会自动存入历史记录（含日期、每人应付、行程数等），此操作会同步到所有人。"
-    : "确定清空全部？当前没有行程数据。";
-  if (!confirm(msg)) return;
-  if (hasData) {
+// Settle: save a snapshot to history and clear trips, but keep members.
+function settleAndClearTrips() {
+  if (state.trips.length > 0) {
     const snap = buildSnapshot();
     state.history.push(snap);
     trimHistory();
   }
-  state.people = [];
   state.trips = [];
+}
+
+els.clearBtn.addEventListener("click", () => {
+  if (!assertAdmin()) return;
+  const hasTrips = state.trips.length > 0;
+  const msg = hasTrips
+    ? "确定清空全部行程记录？\n本次结算会自动存入历史记录（含日期、每人应付、行程数等），成员名单会保留。此操作会同步到所有人。"
+    : "当前没有行程记录可清空。";
+  if (!confirm(msg)) return;
+  if (!hasTrips) return;
+  settleAndClearTrips();
   scheduleSave();
 });
 

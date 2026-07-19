@@ -5,6 +5,7 @@ create table if not exists public.app_state (
   people text[] not null default '{}',
   trips jsonb not null default '[]'::jsonb,
   history jsonb not null default '[]'::jsonb,
+  last_auto_settle text not null default '',
   updated_at timestamptz not null default now()
 );
 
@@ -25,13 +26,14 @@ values (
 )
 on conflict (id) do nothing;
 
--- 若已有表，补加 history 列（已存在则忽略）
+-- 若已有表，补加 history / last_auto_settle 列（已存在则忽略）
 do $$
 begin
   alter table public.app_state add column if not exists history jsonb not null default '[]'::jsonb;
+  alter table public.app_state add column if not exists last_auto_settle text not null default '';
 exception
   when others then
-    raise notice 'history column skip: %', sqlerrm;
+    raise notice 'column skip: %', sqlerrm;
 end $$;
 
 alter table public.app_state enable row level security;
