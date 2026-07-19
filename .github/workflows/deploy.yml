@@ -28,6 +28,7 @@ jobs:
           VITE_SUPABASE_URL: https://nreyuviaobqhobppotfa.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_w5w3BaIjciCZKIlgiGMFsg_qYMSrbX-
           VITE_APP_PASSWORD: chefei123
+          VITE_ADMIN_PASSWORD: heartunderblade
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

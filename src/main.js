@@ -2,9 +2,13 @@ import { createClient } from "@supabase/supabase-js";
 import "./style.css";
 
 const AUTH_KEY = "transportfunds.auth";
+const ROLE_KEY = "transportfunds.role";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const APP_PASSWORD = import.meta.env.VITE_APP_PASSWORD;
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
+
+let currentRole = "viewer";
 
 const demoTrips = [
   { id: "d1", date: "2026-07-15", amount: 16.98, riders: ["黄", "张", "吴"] },
@@ -35,6 +39,7 @@ const els = {
   loginError: document.getElementById("loginError"),
   logoutBtn: document.getElementById("logoutBtn"),
   syncBadge: document.getElementById("syncBadge"),
+  roleBadge: document.getElementById("roleBadge"),
   peopleList: document.getElementById("peopleList"),
   rideChecks: document.getElementById("rideChecks"),
   tripsList: document.getElementById("tripsList"),
@@ -82,9 +87,23 @@ function isAuthed() {
   return sessionStorage.getItem(AUTH_KEY) === "1";
 }
 
+function loadRole() {
+  const stored = sessionStorage.getItem(ROLE_KEY);
+  currentRole = stored === "admin" ? "admin" : "viewer";
+}
+
+function applyRole() {
+  els.appScreen.dataset.role = currentRole;
+  if (els.roleBadge) {
+    els.roleBadge.textContent = currentRole === "admin" ? "管理员" : "仅查看";
+    els.roleBadge.className = `role-badge ${currentRole}`;
+  }
+}
+
 function showApp() {
   els.loginScreen.classList.add("hidden");
   els.appScreen.classList.remove("hidden");
+  applyRole();
 }
 
 function showLogin(msg = "") {
@@ -120,12 +139,13 @@ function calcTotals() {
 }
 
 function renderPeople() {
+  const isAdmin = currentRole === "admin";
   els.peopleList.innerHTML = state.people
     .map(
       (p) => `
       <span class="chip">
         ${p}
-        <button type="button" data-remove-person="${p}" title="移除">×</button>
+        ${isAdmin ? `<button type="button" data-remove-person="${p}" title="移除">×</button>` : ""}
       </span>`
     )
     .join("");
@@ -144,7 +164,7 @@ function renderPeople() {
 
 function renderTrips() {
   if (!state.trips.length) {
-    els.tripsList.innerHTML = `<div class="empty">还没有行程。可点击「载入示例」，或手动添加。</div>`;
+    els.tripsList.innerHTML = `<div class="empty">还没有行程。${currentRole === "admin" ? "可点击「重置为初始数据」，或手动添加。" : "请等待管理员添加。"}</div>`;
     return;
   }
 
@@ -154,6 +174,9 @@ function renderTrips() {
     .map((trip) => {
       const riders = trip.riders || [];
       const share = riders.length ? trip.amount / riders.length : 0;
+      const delBtn = currentRole === "admin"
+        ? `<button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>`
+        : "";
       return `
         <article class="trip" data-id="${trip.id}">
           <div class="trip-top">
@@ -162,7 +185,7 @@ function renderTrips() {
               <span class="trip-amount">¥${money(trip.amount)}</span>
               <span class="trip-share">人均 ¥${money(share)} · ${riders.join("") || "无人"}</span>
             </div>
-            <button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>
+            ${delBtn}
           </div>
         </article>`;
     })
@@ -185,8 +208,10 @@ function renderSummary() {
 
   const renderRow = (p) => `
     <div class="person-row${state.people.includes(p) ? "" : " former"}">
-      <div class="person-name">${p}${state.people.includes(p) ? "" : '<span class="former-tag">已移除</span>'}</div>
-      <div class="person-detail">参与 ${counts[p]} 次</div>
+      <div class="person-info">
+        <div class="person-name">${p}${state.people.includes(p) ? "" : '<span class="former-tag">已移除</span>'}</div>
+        <div class="person-detail">参与 ${counts[p]} 次</div>
+      </div>
       <div class="person-money">¥${money(totals[p])}</div>
     </div>`;
 
@@ -310,22 +335,41 @@ function tryLogin() {
   }
 
   const input = els.passwordInput.value.trim();
-  if (input !== APP_PASSWORD) {
+  let role = null;
+  if (ADMIN_PASSWORD && input === ADMIN_PASSWORD) {
+    role = "admin";
+  } else if (input === APP_PASSWORD) {
+    role = "viewer";
+  }
+
+  if (!role) {
     els.loginError.textContent = "口令不正确";
     return;
   }
 
   sessionStorage.setItem(AUTH_KEY, "1");
+  sessionStorage.setItem(ROLE_KEY, role);
+  currentRole = role;
   els.loginError.textContent = "";
   bootApp();
 }
 
 function logout() {
   sessionStorage.removeItem(AUTH_KEY);
+  sessionStorage.removeItem(ROLE_KEY);
   location.reload();
 }
 
+function assertAdmin() {
+  if (currentRole !== "admin") {
+    alert("仅管理员可编辑，请使用管理员口令登录。");
+    return false;
+  }
+  return true;
+}
+
 function addPerson() {
+  if (!assertAdmin()) return;
   const name = els.newPerson.value.trim();
   if (!name) return;
   if (state.people.includes(name)) {
@@ -338,6 +382,7 @@ function addPerson() {
 }
 
 function addTrip() {
+  if (!assertAdmin()) return;
   const date = els.tripDate.value;
   const amount = Number(els.tripAmount.value);
   const riders = [...document.querySelectorAll('input[name="rider"]:checked')].map((el) => el.value);
@@ -363,7 +408,8 @@ function addTrip() {
 }
 
 function loadDemo() {
-  if (!confirm("用示例数据覆盖当前云端数据？")) return;
+  if (!assertAdmin()) return;
+  if (!confirm("用初始数据覆盖当前云端数据？")) return;
   state.people = ["黄", "张", "吴", "陈"];
   state.trips = demoTrips.map((t) => ({ ...t, id: uid(), riders: [...t.riders] }));
   scheduleSave();
@@ -381,6 +427,7 @@ els.newPerson.addEventListener("keydown", (e) => {
 els.addTripBtn.addEventListener("click", addTrip);
 els.loadDemoBtn.addEventListener("click", loadDemo);
 els.clearBtn.addEventListener("click", () => {
+  if (!assertAdmin()) return;
   if (confirm("确定清空全部行程与成员？此操作会同步到所有人。")) {
     state.people = [];
     state.trips = [];
@@ -392,6 +439,7 @@ els.clearBtn.addEventListener("click", () => {
 els.peopleList.addEventListener("click", (e) => {
   const name = e.target.getAttribute("data-remove-person");
   if (!name) return;
+  if (!assertAdmin()) return;
   state.people = state.people.filter((p) => p !== name);
   scheduleSave();
 });
@@ -399,6 +447,7 @@ els.peopleList.addEventListener("click", (e) => {
 els.tripsList.addEventListener("click", (e) => {
   const id = e.target.getAttribute("data-remove-trip");
   if (!id) return;
+  if (!assertAdmin()) return;
   state.trips = state.trips.filter((t) => t.id !== id);
   scheduleSave();
 });
@@ -406,6 +455,7 @@ els.tripsList.addEventListener("click", (e) => {
 if (!configReady()) {
   showLogin("未配置环境变量。请先按 DEPLOY.md 完成 Supabase 配置。");
 } else if (isAuthed()) {
+  loadRole();
   bootApp();
 } else {
   showLogin();

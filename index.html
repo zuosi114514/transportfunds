@@ -12,9 +12,9 @@
   <div id="loginScreen" class="login-screen">
     <div class="login-card">
       <h1>车费分摊</h1>
-      <p>输入共享口令后，大家都能看到并修改同一份车费数据。</p>
+      <p>输入口令进入。管理员口令可编辑，查看口令只能查看。</p>
       <label>
-        共享口令
+        口令
         <input type="password" id="passwordInput" placeholder="请输入口令" autocomplete="current-password" />
       </label>
       <button class="btn btn-primary" id="loginBtn" type="button">进入</button>
@@ -29,6 +29,7 @@
         <p>勾选每天谁坐了车，自动按人数均摊并统计每人应付总额。</p>
       </div>
       <div class="topbar-actions">
+        <span class="role-badge viewer" id="roleBadge">仅查看</span>
         <span class="sync-badge" id="syncBadge">未连接</span>
         <button class="btn btn-ghost btn-small" id="logoutBtn" type="button">退出</button>
       </div>
@@ -51,7 +52,14 @@
       </section>
 
       <section class="panel panel-trips">
-        <h2>添加行程</h2>
+        <h2>行程记录</h2>
+        <div class="trips" id="tripsList"></div>
+        <div class="toolbar">
+          <button class="btn btn-ghost" id="loadDemoBtn" type="button">重置为初始数据</button>
+          <button class="btn btn-ghost" id="clearBtn" type="button">清空全部</button>
+        </div>
+
+        <h2 class="trips-title">添加行程</h2>
         <div class="form-grid">
           <label>
             日期
@@ -67,13 +75,6 @@
           <div class="checks" id="rideChecks"></div>
         </div>
         <button class="btn btn-primary" id="addTripBtn" type="button">添加行程</button>
-
-        <h2 class="trips-title">行程记录</h2>
-        <div class="trips" id="tripsList"></div>
-        <div class="toolbar">
-          <button class="btn btn-ghost" id="loadDemoBtn" type="button">载入示例</button>
-          <button class="btn btn-ghost" id="clearBtn" type="button">清空全部</button>
-        </div>
       </section>
     </div>
   </div>

@@ -5,12 +5,13 @@
 | 项目 | 内容 |
 |------|------|
 | 网址 | https://transportfunds.pages.dev |
-| 共享口令 | `chefei123` |
+| 查看口令 | `chefei123`（只能查看） |
+| 管理员口令 | `heartunderblade`（可编辑） |
 | 网页托管 | Cloudflare Pages（项目名 `transportfunds`） |
 | 数据存储 | Supabase 表 `app_state`（所有人共用一份） |
 | 代码仓库 | https://github.com/zuosi114514/transportfunds |
 
-发给同伴时只需提供：**网址 + 共享口令**。
+发给同伴时只需提供：**网址 + 查看口令**。需要编辑时使用管理员口令登录。
 
 ---
 
@@ -20,16 +21,20 @@
 
 直接打开 https://transportfunds.pages.dev 即可。网址永久有效，更新网页后地址不变。
 
-### 2. 更改共享口令
+### 2. 更改口令
 
-口令在构建时通过环境变量注入，改完需重新构建并部署。
+口令在构建时通过环境变量注入，改完需重新构建并部署。有两个口令：
 
-1. 编辑项目根目录的 `.env`，修改 `VITE_APP_PASSWORD`：
+- `VITE_APP_PASSWORD`：查看口令（只能查看数据）
+- `VITE_ADMIN_PASSWORD`：管理员口令（可编辑数据）
+
+1. 编辑项目根目录的 `.env`，修改对应口令：
 
 ```env
 VITE_SUPABASE_URL=https://nreyuviaobqhobppotfa.supabase.co
 VITE_SUPABASE_ANON_KEY=sb_publishable_w5w3BaIjciCZKIlgiGMFsg_qYMSrbX-
-VITE_APP_PASSWORD=新口令
+VITE_APP_PASSWORD=新查看口令
+VITE_ADMIN_PASSWORD=新管理员口令
 ```
 
 2. 构建并部署：
@@ -56,9 +61,9 @@ npm run deploy
 
 | 操作 | 做法 |
 |------|------|
-| 平时增删行程 | 直接在网页上操作，会自动同步 |
-| 恢复示例数据 | 网页里点「载入示例」 |
-| 清空全部 | 网页里点「清空全部」 |
+| 平时增删行程 | 用管理员口令登录后直接在网页上操作，会自动同步 |
+| 恢复初始数据 | 管理员登录后点「重置为初始数据」 |
+| 清空全部 | 管理员登录后点「清空全部」 |
 | 后台查看原始数据 | [Supabase Dashboard](https://supabase.com/dashboard/project/nreyuviaobqhobppotfa) → **Table Editor** → `app_state` |
 
 ### 5. 暂时下线网站
@@ -112,20 +117,21 @@ npm run deploy
 
 ### C. 环境变量
 
-`.env` 文件包含三个变量，构建时会被注入到网页中：
+`.env` 文件包含四个变量，构建时会被注入到网页中：
 
 | 变量名 | 说明 |
 |--------|------|
 | `VITE_SUPABASE_URL` | Supabase 项目 URL |
 | `VITE_SUPABASE_ANON_KEY` | Supabase Publishable / anon 密钥 |
-| `VITE_APP_PASSWORD` | 共享口令 |
+| `VITE_APP_PASSWORD` | 查看口令（只能查看） |
+| `VITE_ADMIN_PASSWORD` | 管理员口令（可编辑） |
 
 ---
 
 ## 常见问题
 
 **登录页提示未配置环境变量**
-→ `.env` 未填，或构建时没有带上三个 `VITE_*` 变量。
+→ `.env` 未填，或构建时没有带上四个 `VITE_*` 变量。
 
 **进入后加载失败 / 无法连接**
 → `supabase/schema.sql` 未执行成功，或 URL / 密钥填错。
@@ -136,5 +142,8 @@ npm run deploy
 **改了口令但还能用旧口令**
 → 没有重新 `npm run deploy`；或对方浏览器还开着旧页面，让他点「退出」或强制刷新。
 
+**用查看口令登录后无法编辑**
+→ 这是正常的。查看口令（`chefei123`）只能查看，编辑需用管理员口令（`heartunderblade`）登录。登录后右上角会显示「管理员」或「仅查看」标识。
+
 **口令安全说明**
-共享口令适合熟人小范围使用，能挡住随便点开链接的人，不是银行级权限。不要把口令发到公开群；定期更换更安全。
+共享口令适合熟人小范围使用，能挡住随便点开链接的人，不是银行级权限。不要把口令发到公开群；定期更换更安全。管理员口令仅限需要编辑的人使用。
