@@ -93,12 +93,22 @@ function showLogin(msg = "") {
   els.loginError.textContent = msg;
 }
 
+// Collect all unique rider names from trips (including people no longer in the list)
+function allKnownNames() {
+  const set = new Set(state.people);
+  for (const t of state.trips) {
+    for (const r of t.riders || []) set.add(r);
+  }
+  return [...set];
+}
+
 function calcTotals() {
-  const totals = Object.fromEntries(state.people.map((p) => [p, 0]));
-  const counts = Object.fromEntries(state.people.map((p) => [p, 0]));
+  const names = allKnownNames();
+  const totals = Object.fromEntries(names.map((p) => [p, 0]));
+  const counts = Object.fromEntries(names.map((p) => [p, 0]));
 
   for (const trip of state.trips) {
-    const riders = (trip.riders || []).filter((p) => state.people.includes(p));
+    const riders = (trip.riders || []).filter((p) => totals.hasOwnProperty(p));
     if (!riders.length || !(trip.amount > 0)) continue;
     const share = trip.amount / riders.length;
     for (const p of riders) {
@@ -120,11 +130,12 @@ function renderPeople() {
     )
     .join("");
 
+  // Ride checks for the "add trip" form — only current members
   els.rideChecks.innerHTML = state.people
     .map(
       (p) => `
       <label class="check">
-        <input type="checkbox" name="rider" value="${p}" checked />
+        <input type="checkbox" name="rider" value="${p}" />
         ${p}
       </label>`
     )
@@ -153,19 +164,6 @@ function renderTrips() {
             </div>
             <button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>
           </div>
-          <div class="checks">
-            ${state.people
-              .map(
-                (p) => `
-                <label class="check">
-                  <input type="checkbox" data-trip="${trip.id}" value="${p}" ${
-                    riders.includes(p) ? "checked" : ""
-                  } />
-                  ${p}
-                </label>`
-              )
-              .join("")}
-          </div>
         </article>`;
     })
     .join("");
@@ -174,24 +172,28 @@ function renderTrips() {
 function renderSummary() {
   const { totals, counts } = calcTotals();
   const grand = Object.values(totals).reduce((a, b) => a + b, 0);
+  const names = allKnownNames();
 
-  if (!state.people.length) {
+  if (!names.length) {
     els.summary.innerHTML = `<div class="empty">请先添加成员。</div>`;
     return;
   }
 
+  // Show current members first, then former members (in trips but not in people)
+  const current = state.people.filter((p) => totals.hasOwnProperty(p));
+  const former = names.filter((p) => !state.people.includes(p));
+
+  const renderRow = (p) => `
+    <div class="person-row${state.people.includes(p) ? "" : " former"}">
+      <div class="person-name">${p}${state.people.includes(p) ? "" : '<span class="former-tag">已移除</span>'}</div>
+      <div class="person-detail">参与 ${counts[p]} 次</div>
+      <div class="person-money">¥${money(totals[p])}</div>
+    </div>`;
+
   els.summary.innerHTML =
     `<div class="summary-grid">` +
-    state.people
-      .map(
-        (p) => `
-        <div class="person-row">
-          <div class="person-name">${p}</div>
-          <div class="person-detail">参与 ${counts[p]} 次</div>
-          <div class="person-money">¥${money(totals[p])}</div>
-        </div>`
-      )
-      .join("") +
+    current.map(renderRow).join("") +
+    former.map(renderRow).join("") +
     `</div>` +
     `<div class="total-bar"><span>合计核对</span><span>¥${money(grand)}</span></div>`;
 }
@@ -355,6 +357,8 @@ function addTrip() {
 
   state.trips.push({ id: uid(), date, amount, riders });
   els.tripAmount.value = "";
+  // Uncheck all ride checkboxes after adding
+  document.querySelectorAll('input[name="rider"]').forEach((el) => (el.checked = false));
   scheduleSave();
 }
 
@@ -384,14 +388,11 @@ els.clearBtn.addEventListener("click", () => {
   }
 });
 
+// Remove person: only removes from the people list, does NOT touch existing trips
 els.peopleList.addEventListener("click", (e) => {
   const name = e.target.getAttribute("data-remove-person");
   if (!name) return;
   state.people = state.people.filter((p) => p !== name);
-  state.trips = state.trips.map((t) => ({
-    ...t,
-    riders: (t.riders || []).filter((p) => p !== name),
-  }));
   scheduleSave();
 });
 
@@ -402,21 +403,8 @@ els.tripsList.addEventListener("click", (e) => {
   scheduleSave();
 });
 
-els.tripsList.addEventListener("change", (e) => {
-  const id = e.target.getAttribute("data-trip");
-  if (!id) return;
-  const trip = state.trips.find((t) => t.id === id);
-  if (!trip) return;
-  const person = e.target.value;
-  const set = new Set(trip.riders || []);
-  if (e.target.checked) set.add(person);
-  else set.delete(person);
-  trip.riders = [...set];
-  scheduleSave();
-});
-
 if (!configReady()) {
-  showLogin("未配置环境变量。请先按 DEPLOY.md 完成 Supabase 与 Netlify 配置。");
+  showLogin("未配置环境变量。请先按 DEPLOY.md 完成 Supabase 配置。");
 } else if (isAuthed()) {
   bootApp();
 } else {

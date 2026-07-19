@@ -40,15 +40,18 @@
         <div class="summary" id="summary"></div>
       </aside>
 
-      <section class="panel panel-trips">
-        <h2>行程记录</h2>
-
+      <section class="panel panel-members">
+        <h2>成员管理</h2>
         <div class="people" id="peopleList"></div>
         <div class="row">
           <input type="text" id="newPerson" placeholder="添加成员，如：黄" maxlength="8" />
           <button class="btn btn-ghost" id="addPersonBtn" type="button">添加</button>
         </div>
+        <p class="hint">删除成员不会影响已有行程记录，只是后续添加行程时不再出现该成员。</p>
+      </section>
 
+      <section class="panel panel-trips">
+        <h2>添加行程</h2>
         <div class="form-grid">
           <label>
             日期
@@ -58,12 +61,14 @@
             车费（元）
             <input type="number" id="tripAmount" min="0" step="0.01" inputmode="decimal" placeholder="如 16.98" />
           </label>
-          <button class="btn btn-primary" id="addTripBtn" type="button">添加行程</button>
         </div>
+        <div class="check-section">
+          <div class="check-label">乘车人</div>
+          <div class="checks" id="rideChecks"></div>
+        </div>
+        <button class="btn btn-primary" id="addTripBtn" type="button">添加行程</button>
 
-        <div class="checks" id="rideChecks"></div>
-        <p class="hint">勾选本次坐车的人；车费会均摊给勾选的人。数据实时同步到云端，所有人共享。</p>
-
+        <h2 class="trips-title">行程记录</h2>
         <div class="trips" id="tripsList"></div>
         <div class="toolbar">
           <button class="btn btn-ghost" id="loadDemoBtn" type="button">载入示例</button>
