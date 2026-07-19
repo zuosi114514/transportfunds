@@ -9,20 +9,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=DM+Sans:opsz,wght@9..40,500;9..40,700&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <div id="loginScreen" class="login-screen">
+  <div id="loginScreen" class="login-screen hidden">
     <div class="login-card">
-      <h1>车费分摊</h1>
-      <p>输入管理员口令进入。连续 5 次输错将锁定 30 分钟。</p>
+      <h1>管理员登录</h1>
+      <p>输入管理员口令以编辑数据。连续 5 次输错将锁定 30 分钟。</p>
       <label>
         管理员口令
         <input type="password" id="passwordInput" placeholder="请输入口令" autocomplete="current-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
       </label>
-      <button class="btn btn-primary" id="loginBtn" type="button">进入</button>
+      <button class="btn btn-primary" id="loginBtn" type="button">登录</button>
+      <button class="btn btn-ghost" id="cancelLoginBtn" type="button">取消，仅查看</button>
       <p class="login-error" id="loginError"></p>
     </div>
   </div>
 
-  <div id="appScreen" class="wrap hidden">
+  <div id="appScreen" class="wrap">
     <header class="topbar">
       <div>
         <h1>车费分摊</h1>
@@ -30,7 +31,8 @@
       </div>
       <div class="topbar-actions">
         <span class="sync-badge" id="syncBadge">未连接</span>
-        <button class="btn btn-ghost btn-small" id="logoutBtn" type="button">退出</button>
+        <button class="btn btn-ghost btn-small hidden" id="loginPromptBtn" type="button">管理员登录</button>
+        <button class="btn btn-ghost btn-small hidden" id="logoutBtn" type="button">退出</button>
       </div>
     </header>
 

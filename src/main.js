@@ -11,6 +11,8 @@ const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 const MAX_ATTEMPTS = 5;
 const LOCK_MINUTES = 30;
 
+let currentRole = "viewer"; // "viewer" (default, can only view) or "admin" (can edit)
+
 const demoTrips = [
   { id: "d1", date: "2026-07-15", amount: 16.98, riders: ["黄", "张", "吴"] },
   { id: "d2", date: "2026-07-15", amount: 17.09, riders: ["黄", "张", "吴"] },
@@ -44,6 +46,8 @@ const els = {
   appScreen: document.getElementById("appScreen"),
   passwordInput: document.getElementById("passwordInput"),
   loginBtn: document.getElementById("loginBtn"),
+  cancelLoginBtn: document.getElementById("cancelLoginBtn"),
+  loginPromptBtn: document.getElementById("loginPromptBtn"),
   loginError: document.getElementById("loginError"),
   logoutBtn: document.getElementById("logoutBtn"),
   syncBadge: document.getElementById("syncBadge"),
@@ -97,15 +101,35 @@ function isAuthed() {
   return sessionStorage.getItem(AUTH_KEY) === "1";
 }
 
+function applyRole() {
+  els.appScreen.dataset.role = currentRole;
+  if (currentRole === "admin") {
+    els.loginPromptBtn.classList.add("hidden");
+    els.logoutBtn.classList.remove("hidden");
+  } else {
+    els.loginPromptBtn.classList.remove("hidden");
+    els.logoutBtn.classList.add("hidden");
+  }
+}
+
 function showApp() {
   els.loginScreen.classList.add("hidden");
   els.appScreen.classList.remove("hidden");
+  applyRole();
 }
 
 function showLogin(msg = "") {
-  els.appScreen.classList.add("hidden");
+  els.appScreen.classList.remove("hidden");
   els.loginScreen.classList.remove("hidden");
   els.loginError.textContent = msg;
+  els.passwordInput.value = "";
+  els.passwordInput.focus();
+}
+
+function hideLogin() {
+  els.loginScreen.classList.add("hidden");
+  els.passwordInput.value = "";
+  els.loginError.textContent = "";
 }
 
 // --- Login lockout (client-side, simulates IP ban) ---
@@ -158,12 +182,13 @@ function calcTotals() {
 }
 
 function renderPeople() {
+  const isAdmin = currentRole === "admin";
   els.peopleList.innerHTML = state.people
     .map(
       (p) => `
       <span class="chip">
         ${p}
-        <button type="button" data-remove-person="${p}" title="移除">×</button>
+        ${isAdmin ? `<button type="button" data-remove-person="${p}" title="移除">×</button>` : ""}
       </span>`
     )
     .join("");
@@ -182,7 +207,7 @@ function renderPeople() {
 
 function renderTrips() {
   if (!state.trips.length) {
-    els.tripsList.innerHTML = `<div class="empty">还没有行程。可点击「重置为初始数据」，或手动添加。</div>`;
+    els.tripsList.innerHTML = `<div class="empty">还没有行程。${currentRole === "admin" ? "可点击「重置为初始数据」，或手动添加。" : "请等待管理员添加。"}</div>`;
     return;
   }
 
@@ -192,12 +217,16 @@ function renderTrips() {
     return (a.time || "").localeCompare(b.time || "");
   });
 
+  const isAdmin = currentRole === "admin";
   els.tripsList.innerHTML = sorted
     .map((trip) => {
       const riders = trip.riders || [];
       const share = riders.length ? trip.amount / riders.length : 0;
       const timeStr = trip.time ? ` ${trip.time}` : "";
       const noteStr = trip.note ? ` · ${trip.note}` : "";
+      const delBtn = isAdmin
+        ? `<button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>`
+        : "";
       return `
         <article class="trip" data-id="${trip.id}">
           <div class="trip-top">
@@ -206,7 +235,7 @@ function renderTrips() {
               <span class="trip-amount">¥${money(trip.amount)}</span>
               <span class="trip-share">人均 ¥${money(share)} · ${riders.join("") || "无人"}${noteStr}</span>
             </div>
-            <button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>
+            ${delBtn}
           </div>
         </article>`;
     })
@@ -499,8 +528,7 @@ function tryLogin() {
     if (lock.attempts >= MAX_ATTEMPTS) {
       lock.lockedUntil = Date.now() + LOCK_MINUTES * 60 * 1000;
       lock.attempts = 0;
-      const mins = LOCK_MINUTES;
-      els.loginError.textContent = `口令错误次数过多，已锁定 ${mins} 分钟。`;
+      els.loginError.textContent = `口令错误次数过多，已锁定 ${LOCK_MINUTES} 分钟。`;
     } else {
       const left = MAX_ATTEMPTS - lock.attempts;
       els.loginError.textContent = `口令不正确。剩余尝试次数：${left}`;
@@ -509,19 +537,34 @@ function tryLogin() {
     return;
   }
 
-  // Success: clear lockout and proceed
+  // Success: clear lockout, switch to admin, hide login screen
   clearLockout();
   sessionStorage.setItem(AUTH_KEY, "1");
+  currentRole = "admin";
   els.loginError.textContent = "";
-  bootApp();
+  els.passwordInput.value = "";
+  hideLogin();
+  applyRole();
+  render();
 }
 
 function logout() {
   sessionStorage.removeItem(AUTH_KEY);
-  location.reload();
+  currentRole = "viewer";
+  applyRole();
+  render();
+}
+
+function assertAdmin() {
+  if (currentRole !== "admin") {
+    alert("仅管理员可编辑，请点右上角「管理员登录」。");
+    return false;
+  }
+  return true;
 }
 
 function addPerson() {
+  if (!assertAdmin()) return;
   const name = els.newPerson.value.trim();
   if (!name) return;
   if (state.people.includes(name)) {
@@ -534,6 +577,7 @@ function addPerson() {
 }
 
 function addTrip() {
+  if (!assertAdmin()) return;
   const date = els.tripDate.value;
   const time = els.tripTime.value;
   const amount = Number(els.tripAmount.value);
@@ -562,6 +606,7 @@ function addTrip() {
 }
 
 function loadDemo() {
+  if (!assertAdmin()) return;
   if (!confirm("用初始数据覆盖当前云端数据？")) return;
   state.people = ["黄", "张", "吴", "陈"];
   state.trips = demoTrips.map((t) => ({ ...t, id: uid(), riders: [...t.riders] }));
@@ -575,6 +620,12 @@ els.passwordInput.addEventListener("keydown", (e) => {
 // Auto-submit shortly after paste so users can paste the password and log in directly.
 els.passwordInput.addEventListener("paste", () => {
   setTimeout(tryLogin, 50);
+});
+els.loginPromptBtn.addEventListener("click", () => {
+  showLogin();
+});
+els.cancelLoginBtn.addEventListener("click", () => {
+  hideLogin();
 });
 els.logoutBtn.addEventListener("click", logout);
 els.addPersonBtn.addEventListener("click", addPerson);
@@ -594,6 +645,7 @@ function settleAndClearTrips() {
 }
 
 els.clearBtn.addEventListener("click", () => {
+  if (!assertAdmin()) return;
   const hasTrips = state.trips.length > 0;
   const msg = hasTrips
     ? "确定清空全部行程记录？\n本次结算会自动存入历史记录（含日期、每人应付、行程数等），成员名单会保留。此操作会同步到所有人。"
@@ -608,6 +660,7 @@ els.clearBtn.addEventListener("click", () => {
 els.peopleList.addEventListener("click", (e) => {
   const name = e.target.getAttribute("data-remove-person");
   if (!name) return;
+  if (!assertAdmin()) return;
   state.people = state.people.filter((p) => p !== name);
   scheduleSave();
 });
@@ -615,14 +668,17 @@ els.peopleList.addEventListener("click", (e) => {
 els.tripsList.addEventListener("click", (e) => {
   const id = e.target.getAttribute("data-remove-trip");
   if (!id) return;
+  if (!assertAdmin()) return;
   state.trips = state.trips.filter((t) => t.id !== id);
   scheduleSave();
 });
 
 if (!configReady()) {
-  showLogin("未配置环境变量。请先按 DEPLOY.md 完成 Supabase 配置。");
-} else if (isAuthed()) {
+  // Still boot so user can see error, but in viewer mode
   bootApp();
 } else {
-  showLogin();
+  if (isAuthed()) {
+    currentRole = "admin";
+  }
+  bootApp();
 }

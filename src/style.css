@@ -43,6 +43,16 @@ body {
 
 .hidden { display: none !important; }
 
+[data-role="viewer"] .panel-members .row,
+[data-role="viewer"] .panel-members .hint,
+[data-role="viewer"] .panel-trips .form-grid,
+[data-role="viewer"] .panel-trips .check-section,
+[data-role="viewer"] .panel-trips .btn-primary,
+[data-role="viewer"] .panel-trips .toolbar,
+[data-role="viewer"] .panel-trips .trips-title {
+  display: none !important;
+}
+
 .wrap {
   width: min(980px, 100%);
   margin: 0 auto;
