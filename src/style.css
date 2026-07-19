@@ -22,13 +22,14 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Avoid background-attachment:fixed — on iOS Safari it paints white "ghost"
+     rectangles over the lower viewport while scrolling. */
   background:
     radial-gradient(900px 420px at 10% -10%, #c9e7ff 0%, transparent 55%),
     radial-gradient(800px 380px at 100% 0%, #c7f0df 0%, transparent 50%),
     linear-gradient(180deg, var(--bg0), var(--bg1) 40%, #eef3f8);
-  background-attachment: fixed;
-  min-height: 100vh;
-  min-height: 100dvh;
+  background-attachment: scroll;
+  min-height: 100%;
 }
 
 body {
@@ -39,6 +40,7 @@ body {
   color: var(--ink);
   background: transparent;
   padding-bottom: calc(12px + var(--safe-b));
+  overflow-x: hidden;
 }
 
 .hidden { display: none !important; }
@@ -60,8 +62,10 @@ body {
 }
 
 .login-screen {
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* Fixed overlay so it never sits in document flow and leaves a blank band. */
+  position: fixed;
+  inset: 0;
+  z-index: 90;
   display: grid;
   place-items: center;
   padding: calc(20px + var(--safe-t)) var(--pad-x) calc(20px + var(--safe-b));
@@ -69,13 +73,13 @@ body {
     radial-gradient(900px 420px at 10% -10%, #c9e7ff 0%, transparent 55%),
     radial-gradient(800px 380px at 100% 0%, #c7f0df 0%, transparent 50%),
     linear-gradient(180deg, var(--bg0), var(--bg1) 40%, #eef3f8);
-  background-attachment: fixed;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .login-card {
   width: min(400px, 100%);
-  background: var(--panel);
-  backdrop-filter: blur(10px);
+  background: #f7fafc;
   border: 1px solid rgba(213, 221, 232, 0.9);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -187,13 +191,14 @@ body {
 }
 
 .panel {
-  background: var(--panel);
-  backdrop-filter: blur(10px);
+  /* Solid-ish panel color (no backdrop-filter): blur layers on iOS Safari
+     often leave a white ghost overlay covering the lower half while scrolling. */
+  background: #f7fafc;
   border: 1px solid rgba(213, 221, 232, 0.9);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 14px;
-  animation: rise 0.6s ease both;
+  animation: rise 0.55s ease both;
 }
 
 .panel-summary { order: -1; }
@@ -324,14 +329,6 @@ body {
   display: none;
 }
 
-.panel-news.collapsed .news-toggle::before {
-  content: "展开";
-}
-
-.panel-news .news-toggle::before {
-  content: "收起";
-}
-
 .panel-news .news-toggle {
   font-size: 0.82rem;
 }
@@ -366,12 +363,20 @@ body {
   place-items: center;
   padding: 20px;
   background: rgba(20, 30, 50, 0.45);
-  backdrop-filter: blur(4px);
+  /* No backdrop-filter: same iOS Safari ghost-layer bug as panels. */
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal.hidden {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .modal-card {
   width: min(420px, 100%);
-  background: var(--panel);
+  background: #f7fafc;
   border: 1px solid rgba(213, 221, 232, 0.9);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -817,8 +822,10 @@ label {
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  /* Animate opacity only. Leaving transform:translateY(0) via fill-mode:both
+     creates sticky containing blocks that break position:fixed overlays. */
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @media (min-width: 480px) {
@@ -835,7 +842,17 @@ label {
 
 @media (min-width: 560px) {
   .form-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .form-grid label {
+    min-width: 0;
+  }
+
+  .form-grid input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .form-grid .btn-primary {
@@ -854,8 +871,20 @@ label {
   .topbar { margin-bottom: 24px; }
   .topbar p { font-size: 0.98rem; }
 
+  /*
+   * Named areas avoid the old bug: members sat beside a tall trips panel, so the
+   * grid row grew to trips' height and left a huge empty light band under members
+   * (looked like a white overlay covering the lower half — admin-only because the
+   * add-trip form makes trips much taller).
+   */
   .layout {
     grid-template-columns: 1.4fr 1fr;
+    grid-template-areas:
+      "trips summary"
+      "trips members"
+      "history history"
+      "news news"
+      "logs logs";
     align-items: start;
     gap: 18px;
   }
@@ -863,27 +892,50 @@ label {
   .panel { padding: 18px; }
 
   .panel-summary {
-    order: 2;
+    grid-area: summary;
+    order: 0;
     position: sticky;
     top: 20px;
   }
 
   .panel-members {
-    order: 1;
+    grid-area: members;
+    order: 0;
   }
 
-  .panel-trips { order: 1; }
+  .panel-trips {
+    grid-area: trips;
+    order: 0;
+  }
 
-  .panel-history { order: 1; }
+  .panel-history {
+    grid-area: history;
+    order: 0;
+  }
 
   .panel-news {
-    order: 1;
-    grid-column: 1 / -1;
+    grid-area: news;
+    order: 0;
+  }
+
+  .panel-logs {
+    grid-area: logs;
+    order: 0;
   }
 
   .form-grid {
-    grid-template-columns: 1fr 1fr auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: end;
+  }
+
+  .form-grid label {
+    min-width: 0;
+  }
+
+  .form-grid input {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .form-grid .btn-primary {
@@ -958,4 +1010,100 @@ label {
   }
 
   .chip button:hover { opacity: 1; }
+}
+
+/* --- Admin operation log panel (always last in page order) --- */
+.panel-logs {
+  order: 4;
+  animation-delay: 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-logs.hidden {
+  display: none !important;
+}
+
+.logs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logs-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.logs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 120px 56px 110px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.log-ts {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+.log-kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.log-kind-system {
+  background: #e6ecf5;
+  color: #4a5a72;
+}
+
+.log-kind-admin {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.log-action {
+  font-weight: 500;
+  color: var(--ink);
+  font-family: "DM Sans", monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
+.log-detail {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .log-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .log-ts { font-size: 0.72rem; }
+  .log-action { font-size: 0.75rem; }
 }

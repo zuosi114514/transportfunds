@@ -1,11 +1,10 @@
 -- 在 Supabase：SQL Editor → New query → 粘贴执行
+-- 本文件可重复执行（idempotent）：已有对象会被跳过，新增列会自动加上。
 
 create table if not exists public.app_state (
   id int primary key default 1 check (id = 1),
   people text[] not null default '{}',
   trips jsonb not null default '[]'::jsonb,
-  history jsonb not null default '[]'::jsonb,
-  last_auto_settle text not null default '',
   updated_at timestamptz not null default now()
 );
 
@@ -26,17 +25,61 @@ values (
 )
 on conflict (id) do nothing;
 
--- 若已有表，补加 history / last_auto_settle / ai_news / deepseek_api_key 列（已存在则忽略）
+-- 迁移：给 app_state 加 ai_news / deepseek_api_key / tavily_api_key 列。
+-- information_schema 检查保证重复执行不会报错。
 do $$
 begin
-  alter table public.app_state add column if not exists history jsonb not null default '[]'::jsonb;
-  alter table public.app_state add column if not exists last_auto_settle text not null default '';
-  alter table public.app_state add column if not exists ai_news jsonb default null;
-  alter table public.app_state add column if not exists deepseek_api_key text default null;
-exception
-  when others then
-    raise notice 'column skip: %', sqlerrm;
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'app_state' and column_name = 'ai_news') then
+    alter table public.app_state add column ai_news jsonb;
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'app_state' and column_name = 'deepseek_api_key') then
+    alter table public.app_state add column deepseek_api_key text;
+  end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'app_state' and column_name = 'tavily_api_key') then
+    alter table public.app_state add column tavily_api_key text;
+  end if;
 end $$;
+
+-- 管理员/系统操作日志表。每条记录一次操作或自动事件。
+--   kind:   'system'（系统自动触发，如 AI 日报抓取、月度自动结算）或 'admin'（管理员手动操作）
+--   action: 简短动作名（如 'news_refresh'、'login'、'clear_trips'、'update_key'）
+--   detail: 人类可读的描述（中文）
+--   actor:  操作来源标识。system 写 'system'；admin 写 'admin'（暂不区分具体用户，因为只有一个管理员口令）
+create table if not exists public.admin_logs (
+  id bigint generated always as identity primary key,
+  ts timestamptz not null default now(),
+  kind text not null check (kind in ('system', 'admin')),
+  action text not null,
+  detail text not null default '',
+  actor text not null default 'system'
+);
+
+create index if not exists admin_logs_ts_idx on public.admin_logs (ts desc);
+
+alter table public.admin_logs enable row level security;
+
+drop policy if exists "allow anon read admin_logs" on public.admin_logs;
+drop policy if exists "allow anon write admin_logs" on public.admin_logs;
+drop policy if exists "allow anon delete admin_logs" on public.admin_logs;
+
+create policy "allow anon read admin_logs"
+  on public.admin_logs for select
+  to anon
+  using (true);
+
+create policy "allow anon write admin_logs"
+  on public.admin_logs for insert
+  to anon
+  with check (true);
+
+-- DELETE 仅通过服务端 /api/logs（校验管理员口令后）调用；不开放 UPDATE（防篡改）。
+create policy "allow anon delete admin_logs"
+  on public.admin_logs for delete
+  to anon
+  using (true);
 
 alter table public.app_state enable row level security;
 

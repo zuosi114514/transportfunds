@@ -30,7 +30,53 @@ const state = {
   history: [],
   lastAutoSettle: "", // YYYY-MM of the last automatic monthly settlement
   aiNews: null, // { fetchTime, date, items: [{title, source, summary}] }
+  adminLogs: [], // [{ ts, kind, action, detail, actor }] — only loaded for admins
 };
+
+// --- Operation log (best-effort, never blocks UI) ---
+// Prefer writing directly to Supabase (anon INSERT is allowed by RLS) so logging
+// does not depend on ADMIN_PASSWORD matching the Pages Function env var.
+// Fall back to /api/log when the supabase client is not ready yet.
+let logsReloadTimer = null;
+function scheduleLogsReload() {
+  if (currentRole !== "admin" || !els.adminLogsPanel) return;
+  if (els.adminLogsPanel.classList.contains("hidden")) return;
+  if (logsReloadTimer) clearTimeout(logsReloadTimer);
+  logsReloadTimer = setTimeout(() => {
+    loadAdminLogs();
+  }, 400);
+}
+
+async function writeAdminLog(action, detail = "", kind = "admin") {
+  const payload = {
+    kind: kind === "system" ? "system" : "admin",
+    action: String(action || "").slice(0, 64),
+    detail: String(detail || "").slice(0, 400),
+    actor: kind === "system" ? "system" : "admin",
+  };
+  if (!payload.action) return;
+  try {
+    if (supabase) {
+      const { error } = await supabase.from("admin_logs").insert(payload);
+      if (error) throw error;
+    } else if (ADMIN_PASSWORD) {
+      const res = await fetch("/api/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminPassword: ADMIN_PASSWORD, action: payload.action, detail: payload.detail }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } else {
+      return;
+    }
+    scheduleLogsReload();
+  } catch (e) {
+    console.warn("writeAdminLog failed:", e.message || e);
+  }
+}
 
 // History snapshots: keep at most MAX_HISTORY_ENTRIES; when exceeded, drop the oldest half.
 // Also guard total payload size so we stay well within Supabase free-tier limits.
@@ -73,12 +119,17 @@ const els = {
   keyModal: document.getElementById("keyModal"),
   keyModalPassword: document.getElementById("keyModalPassword"),
   keyModalKey: document.getElementById("keyModalKey"),
+  keyModalTavilyKey: document.getElementById("keyModalTavilyKey"),
   keyModalError: document.getElementById("keyModalError"),
   keyModalCancel: document.getElementById("keyModalCancel"),
   keyModalSave: document.getElementById("keyModalSave"),
   newsPanel: document.getElementById("newsPanel"),
   newsToggle: document.getElementById("newsToggle"),
   newsBody: document.getElementById("newsBody"),
+  adminLogsPanel: document.getElementById("adminLogsPanel"),
+  adminLogsList: document.getElementById("adminLogsList"),
+  adminLogsRefresh: document.getElementById("adminLogsRefresh"),
+  adminLogsClear: document.getElementById("adminLogsClear"),
 };
 
 function money(n) {
@@ -121,11 +172,59 @@ function applyRole() {
     els.loginPromptBtn.classList.add("hidden");
     els.logoutBtn.classList.remove("hidden");
     if (els.newsActions) els.newsActions.classList.remove("hidden");
+    if (els.adminLogsPanel) els.adminLogsPanel.classList.remove("hidden");
+    loadAdminLogs();
   } else {
     els.loginPromptBtn.classList.remove("hidden");
     els.logoutBtn.classList.add("hidden");
     if (els.newsActions) els.newsActions.classList.add("hidden");
+    if (els.adminLogsPanel) els.adminLogsPanel.classList.add("hidden");
   }
+}
+
+// --- Admin operation log panel ---
+// Loads recent log entries from /api/logs and renders them. Best-effort: if the
+// table doesn't exist yet (pre-migration) or the request fails, the panel just
+// shows an empty / error state without breaking the rest of the UI.
+async function loadAdminLogs() {
+  if (!els.adminLogsList) return;
+  els.adminLogsList.innerHTML = `<div class="empty">正在加载操作日志…</div>`;
+  try {
+    const res = await fetch("/api/logs?limit=50", { method: "GET" });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok && Array.isArray(data.items)) {
+      state.adminLogs = data.items;
+      renderAdminLogs();
+    } else {
+      els.adminLogsList.innerHTML = `<div class="empty">加载日志失败：${escapeHtml(data.error || `HTTP ${res.status}`)}</div>`;
+    }
+  } catch (err) {
+    els.adminLogsList.innerHTML = `<div class="empty">加载日志失败：${escapeHtml(err.message || "网络错误")}</div>`;
+  }
+}
+
+function renderAdminLogs() {
+  if (!els.adminLogsList) return;
+  const logs = state.adminLogs;
+  if (!Array.isArray(logs) || !logs.length) {
+    els.adminLogsList.innerHTML = `<div class="empty">暂无操作日志。</div>`;
+    return;
+  }
+  const rows = logs.map((log) => {
+    const ts = log.ts ? formatSnapshotDate(log.ts) : "";
+    const kind = log.kind === "system" ? "系统" : "管理员";
+    const kindClass = log.kind === "system" ? "log-kind-system" : "log-kind-admin";
+    const action = escapeHtml(log.action || "");
+    const detail = escapeHtml(log.detail || "");
+    return `
+      <div class="log-row">
+        <span class="log-ts">${ts}</span>
+        <span class="log-kind ${kindClass}">${kind}</span>
+        <span class="log-action">${action}</span>
+        <span class="log-detail">${detail}</span>
+      </div>`;
+  }).join("");
+  els.adminLogsList.innerHTML = rows;
 }
 
 function showApp() {
@@ -137,6 +236,8 @@ function showApp() {
 function showLogin(msg = "") {
   els.appScreen.classList.remove("hidden");
   els.loginScreen.classList.remove("hidden");
+  // Lock background scroll while the fixed login overlay is open.
+  document.body.style.overflow = "hidden";
   els.loginError.textContent = msg;
   els.passwordInput.value = "";
   els.passwordInput.focus();
@@ -144,6 +245,7 @@ function showLogin(msg = "") {
 
 function hideLogin() {
   els.loginScreen.classList.add("hidden");
+  document.body.style.overflow = "";
   els.passwordInput.value = "";
   els.loginError.textContent = "";
 }
@@ -462,10 +564,13 @@ async function refreshAiNewsIfNeeded() {
   await fetchAiNews(false);
 }
 
-// Manual refresh: admin clicked "更新新闻". Always forces a DeepSeek call.
+// Manual refresh: admin clicked "更新新闻". Always forces a Tavily + DeepSeek call.
 async function fetchAiNews(force) {
   if (els.newsList) {
     els.newsList.innerHTML = `<div class="empty news-fetching">正在${force ? "强制" : ""}抓取今日 AI 新闻…</div>`;
+  }
+  if (force) {
+    await writeAdminLog("news_refresh", "管理员点击「更新新闻」，开始强制刷新");
   }
   try {
     const res = await fetch("/api/ai-news", {
@@ -473,43 +578,67 @@ async function fetchAiNews(force) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ force: !!force }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = data.error || `HTTP ${res.status}`;
+      if (force) await writeAdminLog("news_error", `更新新闻失败：${errMsg}`);
+      throw new Error(errMsg);
+    }
     if (data && data.items) {
       state.aiNews = data;
       renderNews();
+      if (force) {
+        await writeAdminLog("news_refresh_ok", `更新新闻成功，共 ${data.items.length} 条`);
+      }
     } else if (data && data.error) {
+      if (force) await writeAdminLog("news_error", `更新新闻失败：${data.error}`);
       if (els.newsList) {
         els.newsList.innerHTML = `<div class="empty news-fetching">抓取失败：${escapeHtml(data.error)}</div>`;
       }
     }
   } catch (err) {
     console.error("fetchAiNews failed", err);
+    if (force) await writeAdminLog("news_error", `更新新闻异常：${(err.message || "").slice(0, 200)}`);
     if (els.newsList) {
       els.newsList.innerHTML = `<div class="empty news-fetching">暂无法抓取 AI 新闻，稍后可重试。</div>`;
     }
   }
 }
 
-// --- DeepSeek API key management (admin only) ---
+// --- API key management (admin only) ---
 function openKeyModal() {
   if (!assertAdmin()) return;
+  writeAdminLog("open_key_modal", "打开 API Key 设置");
   els.keyModalPassword.value = "";
   els.keyModalKey.value = "";
+  if (els.keyModalTavilyKey) els.keyModalTavilyKey.value = "";
   els.keyModalError.textContent = "";
   els.keyModal.classList.remove("hidden");
+  document.body.style.overflow = "hidden";
   els.keyModalPassword.focus();
 }
 
 function closeKeyModal() {
   els.keyModal.classList.add("hidden");
+  document.body.style.overflow = "";
+  writeAdminLog("close_key_modal", "关闭 API Key 设置");
 }
 
-async function saveDeepSeekKey() {
+async function saveApiKeys() {
   const adminPassword = els.keyModalPassword.value;
   const deepseekKey = els.keyModalKey.value.trim();
+  const tavilyKey = els.keyModalTavilyKey ? els.keyModalTavilyKey.value.trim() : "";
   if (!adminPassword) {
     els.keyModalError.textContent = "请输入管理员口令。";
+    return;
+  }
+  // Only send fields the user actually touched. The server treats a string value
+  // as "set this key" (empty string clears it). Omitting a field leaves it untouched.
+  const payload = { adminPassword };
+  if (deepseekKey !== "" || els.keyModalKey.value !== "") payload.deepseekKey = deepseekKey;
+  if (els.keyModalTavilyKey && (tavilyKey !== "" || els.keyModalTavilyKey.value !== "")) payload.tavilyKey = tavilyKey;
+  if (!payload.deepseekKey && !payload.tavilyKey) {
+    els.keyModalError.textContent = "请至少填一项要更新的 Key。";
     return;
   }
   els.keyModalError.textContent = "保存中…";
@@ -517,17 +646,24 @@ async function saveDeepSeekKey() {
     const res = await fetch("/api/update-config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ adminPassword, deepseekKey }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) {
+      const parts = [];
+      if (payload.deepseekKey !== undefined) parts.push("DeepSeek");
+      if (payload.tavilyKey !== undefined) parts.push("Tavily");
+      await writeAdminLog("update_key", `管理员更新 API Key：${parts.join(" + ") || "配置"}`);
       closeKeyModal();
-      alert(data.message || "DeepSeek API Key 已更新。");
+      alert(data.message || "API Key 已更新。");
     } else {
-      els.keyModalError.textContent = data.error || `保存失败 (HTTP ${res.status})。`;
+      const errMsg = data.error || `保存失败 (HTTP ${res.status})。`;
+      els.keyModalError.textContent = errMsg;
+      await writeAdminLog("update_key_error", errMsg);
     }
   } catch (err) {
     els.keyModalError.textContent = err.message || "网络错误，保存失败。";
+    await writeAdminLog("update_key_error", err.message || "网络错误");
   }
 }
 
@@ -684,10 +820,12 @@ async function maybeAutoSettle() {
     return;
   }
 
+  const count = state.trips.length;
   settleAndClearTrips();
   state.lastAutoSettle = monthKey;
   await persistNow();
   render();
+  writeAdminLog("auto_settle", `${monthKey} 月度自动结算：结算 ${count} 条行程，已存入历史记录`, "system");
 }
 
 function tryLogin() {
@@ -714,9 +852,11 @@ function tryLogin() {
       lock.lockedUntil = Date.now() + LOCK_MINUTES * 60 * 1000;
       lock.attempts = 0;
       els.loginError.textContent = `口令错误次数过多，已锁定 ${LOCK_MINUTES} 分钟。`;
+      writeAdminLog("login_locked", `连续 ${MAX_ATTEMPTS} 次输错口令，触发锁定 ${LOCK_MINUTES} 分钟`, "system");
     } else {
       const left = MAX_ATTEMPTS - lock.attempts;
       els.loginError.textContent = `口令不正确。剩余尝试次数：${left}`;
+      writeAdminLog("login_failed", `管理员口令错误，剩余尝试 ${left} 次`, "system");
     }
     saveLockout(lock);
     return;
@@ -731,9 +871,11 @@ function tryLogin() {
   hideLogin();
   applyRole();
   render();
+  writeAdminLog("login", "管理员登录成功");
 }
 
 function logout() {
+  writeAdminLog("logout", "管理员退出");
   sessionStorage.removeItem(AUTH_KEY);
   currentRole = "viewer";
   applyRole();
@@ -759,6 +901,7 @@ function addPerson() {
   state.people.push(name);
   els.newPerson.value = "";
   scheduleSave();
+  writeAdminLog("add_person", `添加成员：${name}`);
 }
 
 function addTrip() {
@@ -788,6 +931,7 @@ function addTrip() {
   // Uncheck all ride checkboxes after adding
   document.querySelectorAll('input[name="rider"]').forEach((el) => (el.checked = false));
   scheduleSave();
+  writeAdminLog("add_trip", `添加行程：${date}${time ? " " + time : ""} ${amount}元 ${riders.length}人（${riders.join("、")}）`);
 }
 
 function loadDemo() {
@@ -796,9 +940,13 @@ function loadDemo() {
   state.people = ["黄", "张", "吴", "陈"];
   state.trips = demoTrips.map((t) => ({ ...t, id: uid(), riders: [...t.riders] }));
   scheduleSave();
+  writeAdminLog("load_demo", "重置为初始示例数据");
 }
 
-els.loginBtn.addEventListener("click", tryLogin);
+els.loginBtn.addEventListener("click", () => {
+  writeAdminLog("click_login", "点击「登录」", "system");
+  tryLogin();
+});
 els.passwordInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") tryLogin();
 });
@@ -807,9 +955,11 @@ els.passwordInput.addEventListener("paste", () => {
   setTimeout(tryLogin, 50);
 });
 els.loginPromptBtn.addEventListener("click", () => {
+  writeAdminLog("open_login", "点击「管理员登录」", "system");
   showLogin();
 });
 els.cancelLoginBtn.addEventListener("click", () => {
+  writeAdminLog("cancel_login", "取消管理员登录，仅查看", "system");
   hideLogin();
 });
 els.logoutBtn.addEventListener("click", logout);
@@ -819,13 +969,22 @@ els.refreshNewsBtn.addEventListener("click", () => {
 });
 els.updateKeyBtn.addEventListener("click", openKeyModal);
 els.keyModalCancel.addEventListener("click", closeKeyModal);
-els.keyModalSave.addEventListener("click", saveDeepSeekKey);
+els.keyModalSave.addEventListener("click", saveApiKeys);
 els.keyModalPassword.addEventListener("keydown", (e) => {
   if (e.key === "Enter") els.keyModalKey.focus();
 });
 els.keyModalKey.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") saveDeepSeekKey();
+  if (e.key === "Enter" && els.keyModalTavilyKey) {
+    els.keyModalTavilyKey.focus();
+  } else if (e.key === "Enter") {
+    saveApiKeys();
+  }
 });
+if (els.keyModalTavilyKey) {
+  els.keyModalTavilyKey.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveApiKeys();
+  });
+}
 
 // --- AI news panel collapse ---
 const NEWS_COLLAPSE_KEY = "transportfunds.news.collapsed";
@@ -834,19 +993,26 @@ function loadNewsCollapsed() {
 }
 function applyNewsCollapsed() {
   if (!els.newsPanel || !els.newsToggle) return;
-  if (loadNewsCollapsed()) {
+  const collapsed = loadNewsCollapsed();
+  if (collapsed) {
     els.newsPanel.classList.add("collapsed");
     els.newsToggle.setAttribute("aria-expanded", "false");
+    els.newsToggle.textContent = "展开";
   } else {
     els.newsPanel.classList.remove("collapsed");
     els.newsToggle.setAttribute("aria-expanded", "true");
+    els.newsToggle.textContent = "收起";
   }
 }
 els.newsToggle.addEventListener("click", () => {
   const next = !els.newsPanel.classList.contains("collapsed");
   els.newsPanel.classList.toggle("collapsed", next);
   els.newsToggle.setAttribute("aria-expanded", String(!next));
+  els.newsToggle.textContent = next ? "展开" : "收起";
   localStorage.setItem(NEWS_COLLAPSE_KEY, next ? "1" : "0");
+  if (currentRole === "admin") {
+    writeAdminLog("news_toggle", next ? "收起 AI 日报" : "展开 AI 日报");
+  }
 });
 applyNewsCollapsed();
 
@@ -874,8 +1040,10 @@ els.clearBtn.addEventListener("click", () => {
     : "当前没有行程记录可清空。";
   if (!confirm(msg)) return;
   if (!hasTrips) return;
+  const count = state.trips.length;
   settleAndClearTrips();
   scheduleSave();
+  writeAdminLog("clear_trips", `清空行程，结算 ${count} 条（已存入历史记录）`);
 });
 
 // Remove person: only removes from the people list, does NOT touch existing trips
@@ -885,15 +1053,64 @@ els.peopleList.addEventListener("click", (e) => {
   if (!assertAdmin()) return;
   state.people = state.people.filter((p) => p !== name);
   scheduleSave();
+  writeAdminLog("remove_person", `删除成员：${name}`);
 });
 
 els.tripsList.addEventListener("click", (e) => {
   const id = e.target.getAttribute("data-remove-trip");
   if (!id) return;
   if (!assertAdmin()) return;
+  const trip = state.trips.find((t) => t.id === id);
   state.trips = state.trips.filter((t) => t.id !== id);
   scheduleSave();
+  if (trip) {
+    writeAdminLog("remove_trip", `删除行程：${trip.date}${trip.time ? " " + trip.time : ""} ${trip.amount}元`);
+  }
 });
+
+if (els.adminLogsRefresh) {
+  els.adminLogsRefresh.addEventListener("click", () => {
+    if (!assertAdmin()) return;
+    writeAdminLog("logs_refresh", "刷新操作日志列表");
+    loadAdminLogs();
+  });
+}
+
+async function clearAdminLogs() {
+  if (!assertAdmin()) return;
+  if (!confirm("确定清空全部操作日志？此操作不可撤销。")) return;
+  await writeAdminLog("clear_logs_click", "点击「清空日志」并确认");
+  if (!ADMIN_PASSWORD) {
+    alert("未配置管理员口令，无法清空日志。");
+    return;
+  }
+  if (els.adminLogsList) {
+    els.adminLogsList.innerHTML = `<div class="empty">正在清空操作日志…</div>`;
+  }
+  try {
+    const res = await fetch("/api/logs", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPassword: ADMIN_PASSWORD }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      await loadAdminLogs();
+    } else {
+      await writeAdminLog("clear_logs_error", data.error || `清空失败 HTTP ${res.status}`);
+      alert(data.error || `清空失败 (HTTP ${res.status})`);
+      await loadAdminLogs();
+    }
+  } catch (err) {
+    await writeAdminLog("clear_logs_error", err.message || "网络错误");
+    alert(err.message || "网络错误，清空失败。");
+    await loadAdminLogs();
+  }
+}
+
+if (els.adminLogsClear) {
+  els.adminLogsClear.addEventListener("click", clearAdminLogs);
+}
 
 if (!configReady()) {
   // Still boot so user can see error, but in viewer mode

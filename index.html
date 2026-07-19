@@ -97,7 +97,7 @@
           <h2>AI 日报</h2>
           <div class="news-actions hidden" id="newsActions">
             <button class="btn btn-ghost btn-small" id="refreshNewsBtn" type="button">更新新闻</button>
-            <button class="btn btn-ghost btn-small" id="updateKeyBtn" type="button">DeepSeek Key</button>
+            <button class="btn btn-ghost btn-small" id="updateKeyBtn" type="button">API Key</button>
           </div>
           <button class="btn btn-ghost btn-small news-toggle" id="newsToggle" type="button" aria-expanded="true">收起</button>
         </div>
@@ -109,24 +109,44 @@
         </div>
       </section>
 
-      <div id="keyModal" class="modal hidden">
-        <div class="modal-card">
-          <h3>更新 DeepSeek API Key</h3>
-          <p class="hint">Key 保存在云端数据库，仅服务端可见。留空保存则恢复使用部署时的环境变量。</p>
-          <label>
-            管理员口令
-            <input type="password" id="keyModalPassword" autocomplete="current-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
-          </label>
-          <label>
-            新 DeepSeek API Key
-            <input type="text" id="keyModalKey" placeholder="sk-..." autocorrect="off" autocapitalize="off" spellcheck="false" />
-          </label>
-          <p class="modal-error" id="keyModalError"></p>
-          <div class="modal-actions">
-            <button class="btn btn-ghost" id="keyModalCancel" type="button">取消</button>
-            <button class="btn btn-primary" id="keyModalSave" type="button">保存</button>
+      <section class="panel panel-logs hidden" id="adminLogsPanel">
+        <div class="logs-head">
+          <h2>操作日志</h2>
+          <div class="logs-actions">
+            <button class="btn btn-ghost btn-small" id="adminLogsRefresh" type="button">刷新</button>
+            <button class="btn btn-ghost btn-small" id="adminLogsClear" type="button">清空日志</button>
           </div>
         </div>
+        <p class="hint">记录系统自动运行（AI 日报抓取、月度结算）和管理员操作（登录、增删行程、改 Key 等）。仅管理员可见。最近 50 条，按时间倒序。可点「清空日志」删除全部记录。</p>
+        <div class="logs" id="adminLogsList">
+          <div class="empty">暂无操作日志。</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Modals live outside .layout so position:fixed is relative to the viewport,
+       not trapped by grid / transform containing blocks. -->
+  <div id="keyModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>更新 API Key</h3>
+      <p class="hint">Key 保存在云端数据库，仅服务端可见。留空保存则恢复使用部署时的环境变量。可只填需要改的那一项。</p>
+      <label>
+        管理员口令
+        <input type="password" id="keyModalPassword" autocomplete="current-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+      </label>
+      <label>
+        新 DeepSeek API Key（用于整理新闻）
+        <input type="text" id="keyModalKey" placeholder="sk-..." autocorrect="off" autocapitalize="off" spellcheck="false" />
+      </label>
+      <label>
+        新 Tavily API Key（用于抓取真实新闻）
+        <input type="text" id="keyModalTavilyKey" placeholder="tvly-..." autocorrect="off" autocapitalize="off" spellcheck="false" />
+      </label>
+      <p class="modal-error" id="keyModalError"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="keyModalCancel" type="button">取消</button>
+        <button class="btn btn-primary" id="keyModalSave" type="button">保存</button>
       </div>
     </div>
   </div>

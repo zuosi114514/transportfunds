@@ -84,15 +84,20 @@ npm run deploy
 
 ### 7. AI 日报功能
 
-页面底部「AI 日报」栏每天早上 8 点后自动抓取一次 AI 领域最新动态（新模型、新工具、新技术），由 Cloudflare Pages Function 调用 DeepSeek API 生成，结果缓存到 Supabase `app_state.ai_news` 列，所有用户共享同一份。新闻按分类（新模型 / 新工具 / 研究突破 / 开源项目 / 行业动态）分组展示，每条新闻附可靠来源链接（官方博客/论文/GitHub 等）。
+页面底部「AI 日报」栏每天早上 8 点后自动抓取一次 AI 领域最新动态（新模型、新工具、新技术），由 Cloudflare Pages Function `/api/ai-news` 完成，结果缓存到 Supabase `app_state.ai_news` 列，所有用户共享同一份。新闻按分类（新模型 / 新工具 / 研究突破 / 开源项目 / 行业动态）分组展示，每条新闻附可靠来源链接（官方博客/论文/GitHub 等）。
+
+**抓取流程**（两步走，确保新闻真实可信）：
+
+1. **Tavily Search API** 拉取最近 2 天的真实 AI 新闻（含真实标题、URL、摘要片段、发布日期）。这一步保证 URL 都是搜索引擎返回的真实链接，不会被模型编造。
+2. **DeepSeek chat API** 把 Tavily 返回的原始材料整理成 5 个分类的中文日报，写中文摘要。Prompt 明确要求模型**只基于搜索材料**，不允许使用材料以外的信息或编造 URL。代码里还会校验模型输出的 URL 必须在 Tavily 返回的 URL 集合里，否则丢弃。
 
 **收起/展开**：AI 日报栏标题右侧有「收起/展开」按钮，点击可折叠整个模块。状态保存在浏览器 `localStorage`，刷新后保持。
 
-**抓取频率**：每天最多调用 DeepSeek 1 次。8 点后第一个访问者触发抓取，之后命中缓存，全天不再调用 DeepSeek。月度约 30 次，远低于免费额度。
+**抓取频率**：每天最多调用 Tavily + DeepSeek 各 1 次。8 点后第一个访问者触发抓取，之后命中缓存，全天不再调用。月度约 30 次，远低于免费额度。
 
-**管理员手动更新**：管理员登录后，AI 日报栏右上角出现「更新新闻」按钮，点击可强制重新抓取（无视缓存）。
+**管理员手动更新**：管理员登录后，AI 日报栏右上角出现「更新新闻」按钮，点击可强制重新抓取（无视缓存）。改完 API Key 后建议点一次验证生效。
 
-**管理员更新 DeepSeek API Key**：管理员登录后，AI 日报栏右上角有「DeepSeek Key」按钮，点击后输入管理员口令 + 新 Key 即可保存。Key 保存在 Supabase `app_state.deepseek_api_key` 列，服务端优先使用此值，若为空则回退到部署时的环境变量 `DEEPSEEK_API_KEY`。留空保存则恢复使用环境变量。
+**管理员更新 API Key**：管理员登录后，AI 日报栏右上角有「API Key」按钮，点击后输入管理员口令 + 新的 Tavily Key 和/或 DeepSeek Key 即可保存。Key 保存在 Supabase `app_state.tavily_api_key` / `app_state.deepseek_api_key` 列，服务端优先使用数据库里的值，若为空则回退到部署时的环境变量。留空保存则恢复使用环境变量。可只填需要改的那一项。
 
 **首次启用步骤**：
 
@@ -100,19 +105,69 @@ npm run deploy
    ```sql
    alter table public.app_state add column if not exists ai_news jsonb default null;
    alter table public.app_state add column if not exists deepseek_api_key text default null;
+   alter table public.app_state add column if not exists tavily_api_key text default null;
    ```
 2. 在 [Cloudflare Dashboard](https://dash.cloudflare.com) → Pages → `transportfunds` → **Settings** → **Environment variables** 中添加（**Production** 和 **Preview** 都加）：
-   - `DEEPSEEK_API_KEY` — DeepSeek API 密钥（在 [platform.deepseek.com](https://platform.deepseek.com) 申请，也可不设此变量，登录后用「DeepSeek Key」按钮在网页上设置）
+   - `TAVILY_API_KEY` — Tavily API 密钥（在 [app.tavily.com](https://app.tavily.com) 申请，每月免费 1000 次搜索；也可不设此变量，登录后用「API Key」按钮在网页上设置）
+   - `DEEPSEEK_API_KEY` — DeepSeek API 密钥（在 [platform.deepseek.com](https://platform.deepseek.com) 申请，也可不设此变量，登录后用「API Key」按钮在网页上设置）
    - `ADMIN_PASSWORD` — `heartunderblade`（服务端验证管理员身份用，与 `VITE_ADMIN_PASSWORD` 保持一致）
    - `SUPABASE_URL` — `https://nreyuviaobqhobppotfa.supabase.co`
    - `SUPABASE_ANON_KEY` — `sb_publishable_w5w3BaIjciCZKIlgiGMFsg_qYMSrbX-`
 3. 运行 `npm run deploy` 重新部署。
 
-**注意**：上述四个变量**不要**以 `VITE_` 开头——它们只在服务端（Pages Function）使用，不能注入到前端，否则会暴露密钥。
+**注意**：上述五个变量**不要**以 `VITE_` 开头——它们只在服务端（Pages Function）使用，不能注入到前端，否则会暴露密钥。
 
-**DeepSeek 用量**：新账户赠送 500 万 token，单次日报约 1-2 千 token，足够用数年。
+**Tavily 用量**：免费账户每月 1000 次搜索，本项目每天最多 1 次，月度约 30 次，足够用数年。
+
+**DeepSeek 用量**：新账户赠送 500 万 token，单次日报约 2-4 千 token，足够用数年。
 
 **手动清空缓存重新抓取**：在 Supabase Dashboard → Table Editor → `app_state` → 把 `ai_news` 列清空（设为 NULL），下次有人打开页面就会重新抓取。
+
+### 8. 操作日志（管理员可见）
+
+页面底部「操作日志」栏**仅管理员登录后显示**，记录两类事件：
+
+| 类型 | 标签 | 触发场景 |
+|------|------|---------|
+| 系统 | `系统` | AI 日报自动抓取成功/失败、月度自动结算、打开/取消登录、登录失败/锁定 |
+| 管理员 | `管理员` | 登录成功、退出、所有编辑操作与按钮点击（见下表） |
+
+**会写入日志的操作（action）**：
+
+| action | 含义 |
+|--------|------|
+| `open_login` / `cancel_login` / `click_login` | 打开登录、取消、点击登录 |
+| `login` / `login_failed` / `login_locked` / `logout` | 登录成功、口令错误、锁定、退出 |
+| `news_refresh` / `news_refresh_ok` / `news_error` | 点击更新新闻、成功、失败（前端）；服务端另有系统级抓取日志 |
+| `news_toggle` | 收起/展开 AI 日报 |
+| `open_key_modal` / `close_key_modal` / `update_key` | 打开/关闭 API Key、保存 Key |
+| `add_person` / `remove_person` | 添加/删除成员 |
+| `add_trip` / `remove_trip` / `clear_trips` / `load_demo` | 行程增删、清空、重置示例 |
+| `auto_settle` | 月度自动结算 |
+| `logs_refresh` / `clear_logs_click` / `clear_logs` | 刷新日志列表、点击清空、服务端清空完成 |
+
+写入后若日志面板已打开，约 0.4 秒后自动刷新列表。前端优先直写 Supabase `admin_logs`（不依赖 Pages Function 口令是否一致）。
+
+日志面板显示最近 50 条，按时间倒序。右上角按钮：
+
+| 按钮 | 作用 |
+|------|------|
+| 刷新 | 重新拉取最近 50 条（本身也会记一条日志） |
+| 清空日志 | 删除全部日志（需确认；服务端校验管理员口令）。清空后会留下一条 `clear_logs` 记录作为审计痕迹 |
+
+**数据存储**：独立的 `public.admin_logs` 表（不在 `app_state` 里），每条记录含 `ts`（时间）、`kind`（system/admin）、`action`（动作名）、`detail`（中文描述）、`actor`。日志不可修改（无 UPDATE）；删除仅能通过网页「清空日志」或 SQL（RLS 开放 SELECT / INSERT / DELETE）。
+
+**首次启用**：需在 [Supabase SQL Editor](https://supabase.com/dashboard/project/nreyuviaobqhobppotfa/sql/new) 执行一次 `supabase/schema.sql`（已包含 `admin_logs` 表与 DELETE 策略，幂等可重复执行）。若表已存在但还没加删除策略，只需执行：
+
+```sql
+drop policy if exists "allow anon delete admin_logs" on public.admin_logs;
+create policy "allow anon delete admin_logs"
+  on public.admin_logs for delete
+  to anon
+  using (true);
+```
+
+未执行时日志面板会显示「加载日志失败」或「清空失败」，但其他功能不受影响。
 
 ### 5. 暂时下线网站
 
@@ -202,13 +257,16 @@ npm run deploy
 → 这是自动结算功能。在有 31 天的月份的 31 号，系统会自动保存一份结算快照并清空行程，保留成员。可在「历史结算记录」查看结算详情。
 
 **AI 日报显示「暂无法抓取」或「正在抓取」一直转？**
-→ 检查 Cloudflare Pages 环境变量是否设置了 `DEEPSEEK_API_KEY` / `SUPABASE_URL` / `SUPABASE_ANON_KEY`；检查 Supabase 是否已添加 `ai_news` 列；DeepSeek API 余额是否充足。可在浏览器开发者工具 Network 面板查看 `/api/ai-news` 请求的具体错误。
+→ 检查 Cloudflare Pages 环境变量是否设置了 `TAVILY_API_KEY` / `DEEPSEEK_API_KEY` / `SUPABASE_URL` / `SUPABASE_ANON_KEY`；检查 Supabase 是否已添加 `ai_news` / `tavily_api_key` / `deepseek_api_key` 列；Tavily / DeepSeek API 余额是否充足。可在浏览器开发者工具 Network 面板查看 `/api/ai-news` 请求的具体错误。
+
+**操作日志面板显示「加载日志失败」？**
+→ `admin_logs` 表尚未创建。在 [Supabase SQL Editor](https://supabase.com/dashboard/project/nreyuviaobqhobppotfa/sql/new) 执行一次 `supabase/schema.sql` 即可。其他功能不受影响。
 
 **AI 日报内容好像不是今天的？**
-→ DeepSeek API 基于模型训练数据生成，并非实时联网搜索。内容反映模型对近期 AI 领域的认知，可能不完全等同于当天真实事件。日报每天 8 点后刷新一次。
+→ 现在日报基于 Tavily 搜索引擎返回的真实结果，覆盖最近 2 天的 AI 新闻。如果某天没有重要 AI 新闻，Tavily 可能返回较少材料，DeepSeek 会按"宁缺毋滥"原则只整理能确认的条数。日报每天 8 点后刷新一次。
 
-**AI 日报里的链接打不开或不是真实页面？**
-→ DeepSeek 生成的 URL 优先指向官方域名（如 openai.com、github.com、arxiv.org），但具体路径可能是模型推测的，不一定能访问。点击来源标签会跳转到对应官网。如需真实新闻源，可手动搜索标题。
+**AI 日报里的链接打不开？**
+→ 现在所有 URL 都来自 Tavily 搜索引擎的真实结果，不是模型编造的。如果链接打不开，可能是源站临时故障或已删除文章。代码已校验模型输出的 URL 必须在 Tavily 返回的 URL 集合里，否则丢弃，所以不会出现完全虚构的 URL。
 
 **口令安全说明**
 共享口令适合熟人小范围使用，能挡住随便点开链接的人误改数据，不是银行级权限。**查看无需口令**，只有编辑需要。不要把口令发到公开群；定期更换更安全。连续输错锁定机制可防止暴力破解。
