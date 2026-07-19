@@ -12,9 +12,9 @@
   <div id="loginScreen" class="login-screen">
     <div class="login-card">
       <h1>车费分摊</h1>
-      <p>输入口令进入。管理员口令可编辑，查看口令只能查看。</p>
+      <p>输入管理员口令进入。连续 5 次输错将锁定 30 分钟。</p>
       <label>
-        口令
+        管理员口令
         <input type="password" id="passwordInput" placeholder="请输入口令" autocomplete="current-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
       </label>
       <button class="btn btn-primary" id="loginBtn" type="button">进入</button>
@@ -29,7 +29,6 @@
         <p>勾选每天谁坐了车，自动按人数均摊并统计每人应付总额。</p>
       </div>
       <div class="topbar-actions">
-        <span class="role-badge viewer" id="roleBadge">仅查看</span>
         <span class="sync-badge" id="syncBadge">未连接</span>
         <button class="btn btn-ghost btn-small" id="logoutBtn" type="button">退出</button>
       </div>
@@ -66,8 +65,16 @@
             <input type="date" id="tripDate" />
           </label>
           <label>
+            时间
+            <input type="time" id="tripTime" />
+          </label>
+          <label>
             车费（元）
             <input type="number" id="tripAmount" min="0" step="0.01" inputmode="decimal" placeholder="如 16.98" />
+          </label>
+          <label>
+            备注
+            <input type="text" id="tripNote" placeholder="取经" maxlength="20" />
           </label>
         </div>
         <div class="check-section">
@@ -79,7 +86,7 @@
 
       <section class="panel panel-history">
         <h2>历史结算记录</h2>
-        <p class="hint">每次管理员清空数据时，系统会自动保存一份结算快照（含日期、每人应付、行程数等）。</p>
+        <p class="hint">每次清空行程时，系统会自动保存一份结算快照（含日期、每人应付、行程数等）。</p>
         <div class="history" id="historyList"></div>
       </section>
     </div>

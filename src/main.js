@@ -2,13 +2,14 @@ import { createClient } from "@supabase/supabase-js";
 import "./style.css";
 
 const AUTH_KEY = "transportfunds.auth";
-const ROLE_KEY = "transportfunds.role";
+const LOCKOUT_KEY = "transportfunds.lockout";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const APP_PASSWORD = import.meta.env.VITE_APP_PASSWORD;
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
 
-let currentRole = "viewer";
+// Login lockout: after MAX_ATTEMPTS failed tries, block for LOCK_MINUTES.
+const MAX_ATTEMPTS = 5;
+const LOCK_MINUTES = 30;
 
 const demoTrips = [
   { id: "d1", date: "2026-07-15", amount: 16.98, riders: ["黄", "张", "吴"] },
@@ -46,7 +47,6 @@ const els = {
   loginError: document.getElementById("loginError"),
   logoutBtn: document.getElementById("logoutBtn"),
   syncBadge: document.getElementById("syncBadge"),
-  roleBadge: document.getElementById("roleBadge"),
   peopleList: document.getElementById("peopleList"),
   rideChecks: document.getElementById("rideChecks"),
   tripsList: document.getElementById("tripsList"),
@@ -54,7 +54,9 @@ const els = {
   newPerson: document.getElementById("newPerson"),
   addPersonBtn: document.getElementById("addPersonBtn"),
   tripDate: document.getElementById("tripDate"),
+  tripTime: document.getElementById("tripTime"),
   tripAmount: document.getElementById("tripAmount"),
+  tripNote: document.getElementById("tripNote"),
   addTripBtn: document.getElementById("addTripBtn"),
   loadDemoBtn: document.getElementById("loadDemoBtn"),
   clearBtn: document.getElementById("clearBtn"),
@@ -68,7 +70,7 @@ function money(n) {
 function formatDateLabel(iso) {
   if (!iso) return "未填日期";
   const [, m, d] = iso.split("-");
-  return `${Number(m)}${d}`;
+  return `${Number(m)}-${Number(d)}`;
 }
 
 function uid() {
@@ -88,36 +90,45 @@ function setSync(status, text) {
 }
 
 function configReady() {
-  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && APP_PASSWORD);
+  return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && ADMIN_PASSWORD);
 }
 
 function isAuthed() {
   return sessionStorage.getItem(AUTH_KEY) === "1";
 }
 
-function loadRole() {
-  const stored = sessionStorage.getItem(ROLE_KEY);
-  currentRole = stored === "admin" ? "admin" : "viewer";
-}
-
-function applyRole() {
-  els.appScreen.dataset.role = currentRole;
-  if (els.roleBadge) {
-    els.roleBadge.textContent = currentRole === "admin" ? "管理员" : "仅查看";
-    els.roleBadge.className = `role-badge ${currentRole}`;
-  }
-}
-
 function showApp() {
   els.loginScreen.classList.add("hidden");
   els.appScreen.classList.remove("hidden");
-  applyRole();
 }
 
 function showLogin(msg = "") {
   els.appScreen.classList.add("hidden");
   els.loginScreen.classList.remove("hidden");
   els.loginError.textContent = msg;
+}
+
+// --- Login lockout (client-side, simulates IP ban) ---
+function getLockout() {
+  try {
+    return JSON.parse(localStorage.getItem(LOCKOUT_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveLockout(obj) {
+  localStorage.setItem(LOCKOUT_KEY, JSON.stringify(obj));
+}
+
+function remainingLockMs() {
+  const lock = getLockout();
+  if (!lock.lockedUntil) return 0;
+  return Math.max(0, lock.lockedUntil - Date.now());
+}
+
+function clearLockout() {
+  localStorage.removeItem(LOCKOUT_KEY);
 }
 
 // Collect all unique rider names from trips (including people no longer in the list)
@@ -147,13 +158,12 @@ function calcTotals() {
 }
 
 function renderPeople() {
-  const isAdmin = currentRole === "admin";
   els.peopleList.innerHTML = state.people
     .map(
       (p) => `
       <span class="chip">
         ${p}
-        ${isAdmin ? `<button type="button" data-remove-person="${p}" title="移除">×</button>` : ""}
+        <button type="button" data-remove-person="${p}" title="移除">×</button>
       </span>`
     )
     .join("");
@@ -172,28 +182,31 @@ function renderPeople() {
 
 function renderTrips() {
   if (!state.trips.length) {
-    els.tripsList.innerHTML = `<div class="empty">还没有行程。${currentRole === "admin" ? "可点击「重置为初始数据」，或手动添加。" : "请等待管理员添加。"}</div>`;
+    els.tripsList.innerHTML = `<div class="empty">还没有行程。可点击「重置为初始数据」，或手动添加。</div>`;
     return;
   }
 
-  const sorted = [...state.trips].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const sorted = [...state.trips].sort((a, b) => {
+    const d = (a.date || "").localeCompare(b.date || "");
+    if (d !== 0) return d;
+    return (a.time || "").localeCompare(b.time || "");
+  });
 
   els.tripsList.innerHTML = sorted
     .map((trip) => {
       const riders = trip.riders || [];
       const share = riders.length ? trip.amount / riders.length : 0;
-      const delBtn = currentRole === "admin"
-        ? `<button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>`
-        : "";
+      const timeStr = trip.time ? ` ${trip.time}` : "";
+      const noteStr = trip.note ? ` · ${trip.note}` : "";
       return `
         <article class="trip" data-id="${trip.id}">
           <div class="trip-top">
             <div class="trip-meta">
-              <span class="trip-date">${formatDateLabel(trip.date)}</span>
+              <span class="trip-date">${formatDateLabel(trip.date)}${timeStr}</span>
               <span class="trip-amount">¥${money(trip.amount)}</span>
-              <span class="trip-share">人均 ¥${money(share)} · ${riders.join("") || "无人"}</span>
+              <span class="trip-share">人均 ¥${money(share)} · ${riders.join("") || "无人"}${noteStr}</span>
             </div>
-            ${delBtn}
+            <button class="btn btn-danger" type="button" data-remove-trip="${trip.id}">删除</button>
           </div>
         </article>`;
     })
@@ -420,6 +433,7 @@ function subscribeRealtime() {
 async function bootApp() {
   showApp();
   els.tripDate.value = todayISO();
+  els.tripNote.value = "取经";
 
   supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -465,46 +479,49 @@ async function maybeAutoSettle() {
 function tryLogin() {
   if (!configReady()) {
     els.loginError.textContent =
-      "未配置环境变量。请设置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY / VITE_APP_PASSWORD";
+      "未配置环境变量。请设置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY / VITE_ADMIN_PASSWORD";
+    return;
+  }
+
+  // Check lockout first
+  const remain = remainingLockMs();
+  if (remain > 0) {
+    const mins = Math.ceil(remain / 60000);
+    els.loginError.textContent = `尝试次数过多，已锁定。请 ${mins} 分钟后再试。`;
     return;
   }
 
   const input = els.passwordInput.value.trim();
-  let role = null;
-  if (ADMIN_PASSWORD && input === ADMIN_PASSWORD) {
-    role = "admin";
-  } else if (input === APP_PASSWORD) {
-    role = "viewer";
-  }
-
-  if (!role) {
-    els.loginError.textContent = "口令不正确";
+  if (!ADMIN_PASSWORD || input !== ADMIN_PASSWORD) {
+    // Record failed attempt
+    const lock = getLockout();
+    lock.attempts = (lock.attempts || 0) + 1;
+    if (lock.attempts >= MAX_ATTEMPTS) {
+      lock.lockedUntil = Date.now() + LOCK_MINUTES * 60 * 1000;
+      lock.attempts = 0;
+      const mins = LOCK_MINUTES;
+      els.loginError.textContent = `口令错误次数过多，已锁定 ${mins} 分钟。`;
+    } else {
+      const left = MAX_ATTEMPTS - lock.attempts;
+      els.loginError.textContent = `口令不正确。剩余尝试次数：${left}`;
+    }
+    saveLockout(lock);
     return;
   }
 
+  // Success: clear lockout and proceed
+  clearLockout();
   sessionStorage.setItem(AUTH_KEY, "1");
-  sessionStorage.setItem(ROLE_KEY, role);
-  currentRole = role;
   els.loginError.textContent = "";
   bootApp();
 }
 
 function logout() {
   sessionStorage.removeItem(AUTH_KEY);
-  sessionStorage.removeItem(ROLE_KEY);
   location.reload();
 }
 
-function assertAdmin() {
-  if (currentRole !== "admin") {
-    alert("仅管理员可编辑，请使用管理员口令登录。");
-    return false;
-  }
-  return true;
-}
-
 function addPerson() {
-  if (!assertAdmin()) return;
   const name = els.newPerson.value.trim();
   if (!name) return;
   if (state.people.includes(name)) {
@@ -517,9 +534,10 @@ function addPerson() {
 }
 
 function addTrip() {
-  if (!assertAdmin()) return;
   const date = els.tripDate.value;
+  const time = els.tripTime.value;
   const amount = Number(els.tripAmount.value);
+  const note = els.tripNote.value.trim() || "取经";
   const riders = [...document.querySelectorAll('input[name="rider"]:checked')].map((el) => el.value);
 
   if (!date) {
@@ -535,15 +553,15 @@ function addTrip() {
     return;
   }
 
-  state.trips.push({ id: uid(), date, amount, riders });
+  state.trips.push({ id: uid(), date, time, amount, note, riders });
   els.tripAmount.value = "";
+  els.tripNote.value = "取经";
   // Uncheck all ride checkboxes after adding
   document.querySelectorAll('input[name="rider"]').forEach((el) => (el.checked = false));
   scheduleSave();
 }
 
 function loadDemo() {
-  if (!assertAdmin()) return;
   if (!confirm("用初始数据覆盖当前云端数据？")) return;
   state.people = ["黄", "张", "吴", "陈"];
   state.trips = demoTrips.map((t) => ({ ...t, id: uid(), riders: [...t.riders] }));
@@ -576,7 +594,6 @@ function settleAndClearTrips() {
 }
 
 els.clearBtn.addEventListener("click", () => {
-  if (!assertAdmin()) return;
   const hasTrips = state.trips.length > 0;
   const msg = hasTrips
     ? "确定清空全部行程记录？\n本次结算会自动存入历史记录（含日期、每人应付、行程数等），成员名单会保留。此操作会同步到所有人。"
@@ -591,7 +608,6 @@ els.clearBtn.addEventListener("click", () => {
 els.peopleList.addEventListener("click", (e) => {
   const name = e.target.getAttribute("data-remove-person");
   if (!name) return;
-  if (!assertAdmin()) return;
   state.people = state.people.filter((p) => p !== name);
   scheduleSave();
 });
@@ -599,7 +615,6 @@ els.peopleList.addEventListener("click", (e) => {
 els.tripsList.addEventListener("click", (e) => {
   const id = e.target.getAttribute("data-remove-trip");
   if (!id) return;
-  if (!assertAdmin()) return;
   state.trips = state.trips.filter((t) => t.id !== id);
   scheduleSave();
 });
@@ -607,7 +622,6 @@ els.tripsList.addEventListener("click", (e) => {
 if (!configReady()) {
   showLogin("未配置环境变量。请先按 DEPLOY.md 完成 Supabase 配置。");
 } else if (isAuthed()) {
-  loadRole();
   bootApp();
 } else {
   showLogin();

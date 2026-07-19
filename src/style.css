@@ -43,17 +43,6 @@ body {
 
 .hidden { display: none !important; }
 
-/* Viewer mode: hide all editing controls */
-[data-role="viewer"] .panel-members .row,
-[data-role="viewer"] .panel-members .hint,
-[data-role="viewer"] .panel-trips .form-grid,
-[data-role="viewer"] .panel-trips .check-section,
-[data-role="viewer"] .panel-trips .btn-primary,
-[data-role="viewer"] .panel-trips .toolbar,
-[data-role="viewer"] .panel-trips .trips-title {
-  display: none !important;
-}
-
 .wrap {
   width: min(980px, 100%);
   margin: 0 auto;
@@ -181,28 +170,6 @@ body {
 }
 
 .sync-badge.err::before { background: var(--danger); }
-
-.role-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  background: #eef3f8;
-  color: var(--muted);
-}
-
-.role-badge.admin {
-  background: #1a2332;
-  color: #fff;
-}
-
-.role-badge.viewer {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 
 .layout {
   display: grid;
