@@ -6,14 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler pages deploy dist --project-name=transportfunds --commit-dirty=true"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.50.0"
   },
   "devDependencies": {
-    "dotenv": "^17.4.2",
-    "jszip": "^3.10.1",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "wrangler": "^4.112.0"
   }
 }
