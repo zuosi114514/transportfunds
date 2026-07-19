@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>车费分摊</title>
+  <title>♿冲刺♿</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=DM+Sans:opsz,wght@9..40,500;9..40,700&display=swap" rel="stylesheet" />
@@ -26,7 +26,7 @@
   <div id="appScreen" class="wrap">
     <header class="topbar">
       <div>
-        <h1>车费分摊</h1>
+        <h1>♿冲刺♿</h1>
         <p>勾选每天谁坐了车，自动按人数均摊并统计每人应付总额。</p>
       </div>
       <div class="topbar-actions">
@@ -91,6 +91,43 @@
         <p class="hint">每次清空行程时，系统会自动保存一份结算快照（含日期、每人应付、行程数等）。</p>
         <div class="history" id="historyList"></div>
       </section>
+
+      <section class="panel panel-news" id="newsPanel">
+        <div class="news-head">
+          <h2>AI 日报</h2>
+          <div class="news-actions hidden" id="newsActions">
+            <button class="btn btn-ghost btn-small" id="refreshNewsBtn" type="button">更新新闻</button>
+            <button class="btn btn-ghost btn-small" id="updateKeyBtn" type="button">DeepSeek Key</button>
+          </div>
+          <button class="btn btn-ghost btn-small news-toggle" id="newsToggle" type="button" aria-expanded="true">收起</button>
+        </div>
+        <div class="news-body" id="newsBody">
+          <p class="hint">每天早上 8 点后自动抓取一次 AI 领域最新动态（新模型、新工具、新技术）。管理员可手动更新。新闻附可靠来源链接。</p>
+          <div class="news" id="newsList">
+            <div class="empty">正在加载今日 AI 新闻…</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="keyModal" class="modal hidden">
+        <div class="modal-card">
+          <h3>更新 DeepSeek API Key</h3>
+          <p class="hint">Key 保存在云端数据库，仅服务端可见。留空保存则恢复使用部署时的环境变量。</p>
+          <label>
+            管理员口令
+            <input type="password" id="keyModalPassword" autocomplete="current-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <label>
+            新 DeepSeek API Key
+            <input type="text" id="keyModalKey" placeholder="sk-..." autocorrect="off" autocapitalize="off" spellcheck="false" />
+          </label>
+          <p class="modal-error" id="keyModalError"></p>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" id="keyModalCancel" type="button">取消</button>
+            <button class="btn btn-primary" id="keyModalSave" type="button">保存</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

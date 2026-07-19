@@ -29,6 +29,7 @@ const state = {
   trips: [],
   history: [],
   lastAutoSettle: "", // YYYY-MM of the last automatic monthly settlement
+  aiNews: null, // { fetchTime, date, items: [{title, source, summary}] }
 };
 
 // History snapshots: keep at most MAX_HISTORY_ENTRIES; when exceeded, drop the oldest half.
@@ -65,6 +66,19 @@ const els = {
   loadDemoBtn: document.getElementById("loadDemoBtn"),
   clearBtn: document.getElementById("clearBtn"),
   historyList: document.getElementById("historyList"),
+  newsList: document.getElementById("newsList"),
+  newsActions: document.getElementById("newsActions"),
+  refreshNewsBtn: document.getElementById("refreshNewsBtn"),
+  updateKeyBtn: document.getElementById("updateKeyBtn"),
+  keyModal: document.getElementById("keyModal"),
+  keyModalPassword: document.getElementById("keyModalPassword"),
+  keyModalKey: document.getElementById("keyModalKey"),
+  keyModalError: document.getElementById("keyModalError"),
+  keyModalCancel: document.getElementById("keyModalCancel"),
+  keyModalSave: document.getElementById("keyModalSave"),
+  newsPanel: document.getElementById("newsPanel"),
+  newsToggle: document.getElementById("newsToggle"),
+  newsBody: document.getElementById("newsBody"),
 };
 
 function money(n) {
@@ -106,9 +120,11 @@ function applyRole() {
   if (currentRole === "admin") {
     els.loginPromptBtn.classList.add("hidden");
     els.logoutBtn.classList.remove("hidden");
+    if (els.newsActions) els.newsActions.classList.remove("hidden");
   } else {
     els.loginPromptBtn.classList.remove("hidden");
     els.logoutBtn.classList.add("hidden");
+    if (els.newsActions) els.newsActions.classList.add("hidden");
   }
 }
 
@@ -233,7 +249,7 @@ function renderTrips() {
             <div class="trip-meta">
               <span class="trip-date">${formatDateLabel(trip.date)}${timeStr}</span>
               <span class="trip-amount">¥${money(trip.amount)}</span>
-              <span class="trip-share">人均 ¥${money(share)} · ${riders.join("") || "无人"}${noteStr}</span>
+              <span class="trip-share">人均 ¥${money(share)} · ${riders.join("/") || "无人"}${noteStr}</span>
             </div>
             ${delBtn}
           </div>
@@ -278,6 +294,7 @@ function render() {
   renderTrips();
   renderSummary();
   renderHistory();
+  renderNews();
 }
 
 // Build a compact snapshot of the current settlement state for the history archive.
@@ -353,6 +370,167 @@ function renderHistory() {
     .join("");
 }
 
+// --- AI daily news ---
+// News is refreshed once per day after 8 AM by calling the /api/ai-news endpoint,
+// which in turn calls DeepSeek. The cached result lives in Supabase (app_state.ai_news)
+// so all clients share the same snapshot and we only hit DeepSeek once per day.
+function isNewsStale(news) {
+  if (!news || !news.fetchTime) return true;
+  const fetchDate = new Date(news.fetchTime);
+  if (isNaN(fetchDate.getTime())) return true;
+  const now = new Date();
+  // Build today's 8 AM in the same local timezone as fetchTime (stored as ISO).
+  const today8am = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0);
+  return fetchDate.getTime() < today8am.getTime();
+}
+
+function renderNews() {
+  if (!els.newsList) return;
+  const news = state.aiNews;
+  if (!news || !Array.isArray(news.items) || !news.items.length) {
+    els.newsList.innerHTML = `<div class="empty news-fetching">暂无 AI 日报。${currentRole === "admin" ? "可点击右上角「更新新闻」手动抓取。" : "每天早上 8 点后自动抓取。"}</div>`;
+    return;
+  }
+  const fetchLabel = news.fetchTime ? formatSnapshotDate(news.fetchTime) : "";
+  // Group items by category, preserving the canonical category order.
+  const order = ["新模型", "新工具", "研究突破", "开源项目", "行业动态"];
+  const groups = {};
+  for (const cat of order) groups[cat] = [];
+  for (const it of news.items) {
+    const cat = order.includes(it.category) ? it.category : "行业动态";
+    groups[cat].push(it);
+  }
+  const catsHtml = order
+    .filter((c) => groups[c].length)
+    .map((cat) => {
+      const itemsHtml = groups[cat]
+        .map((it) => {
+          const title = escapeHtml(it.title || "");
+          const source = escapeHtml(it.source || "");
+          const summary = escapeHtml(it.summary || "");
+          const url = it.url || "";
+          const safeUrl = /^https?:\/\//i.test(url) ? url : "";
+          const sourceHtml = source
+            ? safeUrl
+              ? `<span class="news-source"><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${source}</a></span>`
+              : `<span class="news-source">${source}</span>`
+            : "";
+          const linkHtml = safeUrl
+            ? `<a class="news-link" href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeUrl)}</a>`
+            : "";
+          return `
+            <article class="news-item">
+              <div class="news-title">${title}</div>
+              <div class="news-meta">
+                ${sourceHtml}
+              </div>
+              ${summary ? `<div class="news-summary">${summary}</div>` : ""}
+              ${linkHtml}
+            </article>`;
+        })
+        .join("");
+      return `
+        <div class="news-cat">
+          <div class="news-cat-title">${escapeHtml(cat)}<span class="news-cat-count">${groups[cat].length} 条</span></div>
+          ${itemsHtml}
+        </div>`;
+    })
+    .join("");
+  const footer = fetchLabel
+    ? `<div class="empty news-fetching" style="margin-top:10px;">更新于 ${escapeHtml(fetchLabel)}</div>`
+    : "";
+  els.newsList.innerHTML = catsHtml + footer;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Auto-refresh only when the cached snapshot is stale (before today's 8 AM).
+// The serverless function checks the cache again, so DeepSeek is only called
+// once per day even if multiple clients trigger this.
+async function refreshAiNewsIfNeeded() {
+  if (!isNewsStale(state.aiNews)) {
+    renderNews();
+    return;
+  }
+  await fetchAiNews(false);
+}
+
+// Manual refresh: admin clicked "更新新闻". Always forces a DeepSeek call.
+async function fetchAiNews(force) {
+  if (els.newsList) {
+    els.newsList.innerHTML = `<div class="empty news-fetching">正在${force ? "强制" : ""}抓取今日 AI 新闻…</div>`;
+  }
+  try {
+    const res = await fetch("/api/ai-news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: !!force }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && data.items) {
+      state.aiNews = data;
+      renderNews();
+    } else if (data && data.error) {
+      if (els.newsList) {
+        els.newsList.innerHTML = `<div class="empty news-fetching">抓取失败：${escapeHtml(data.error)}</div>`;
+      }
+    }
+  } catch (err) {
+    console.error("fetchAiNews failed", err);
+    if (els.newsList) {
+      els.newsList.innerHTML = `<div class="empty news-fetching">暂无法抓取 AI 新闻，稍后可重试。</div>`;
+    }
+  }
+}
+
+// --- DeepSeek API key management (admin only) ---
+function openKeyModal() {
+  if (!assertAdmin()) return;
+  els.keyModalPassword.value = "";
+  els.keyModalKey.value = "";
+  els.keyModalError.textContent = "";
+  els.keyModal.classList.remove("hidden");
+  els.keyModalPassword.focus();
+}
+
+function closeKeyModal() {
+  els.keyModal.classList.add("hidden");
+}
+
+async function saveDeepSeekKey() {
+  const adminPassword = els.keyModalPassword.value;
+  const deepseekKey = els.keyModalKey.value.trim();
+  if (!adminPassword) {
+    els.keyModalError.textContent = "请输入管理员口令。";
+    return;
+  }
+  els.keyModalError.textContent = "保存中…";
+  try {
+    const res = await fetch("/api/update-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adminPassword, deepseekKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      closeKeyModal();
+      alert(data.message || "DeepSeek API Key 已更新。");
+    } else {
+      els.keyModalError.textContent = data.error || `保存失败 (HTTP ${res.status})。`;
+    }
+  } catch (err) {
+    els.keyModalError.textContent = err.message || "网络错误，保存失败。";
+  }
+}
+
 function applyRemote(data) {
   state.people = Array.isArray(data.people) ? data.people : [];
   state.trips = Array.isArray(data.trips) ? data.trips : [];
@@ -364,6 +542,9 @@ function applyRemote(data) {
   }
   if (typeof data.last_auto_settle === "string") {
     state.lastAutoSettle = data.last_auto_settle;
+  }
+  if (data.ai_news && typeof data.ai_news === "object") {
+    state.aiNews = data.ai_news;
   }
   render();
 }
@@ -405,6 +586,7 @@ async function persistNow() {
     trips: state.trips,
     history: state.history,
     last_auto_settle: state.lastAutoSettle,
+    ai_news: state.aiNews || null,
     updated_at: new Date().toISOString(),
   };
 
@@ -474,6 +656,9 @@ async function bootApp() {
     console.error(err);
     els.summary.innerHTML = `<div class="empty">无法连接 Supabase，请检查环境变量与 schema.sql 是否已执行。</div>`;
   }
+
+  // Fire-and-forget: refresh AI news if today's snapshot isn't ready yet.
+  refreshAiNewsIfNeeded();
 }
 
 // Monthly auto-settle: on or after the 31st of a 31-day month, if we haven't
@@ -628,6 +813,43 @@ els.cancelLoginBtn.addEventListener("click", () => {
   hideLogin();
 });
 els.logoutBtn.addEventListener("click", logout);
+els.refreshNewsBtn.addEventListener("click", () => {
+  if (!assertAdmin()) return;
+  fetchAiNews(true);
+});
+els.updateKeyBtn.addEventListener("click", openKeyModal);
+els.keyModalCancel.addEventListener("click", closeKeyModal);
+els.keyModalSave.addEventListener("click", saveDeepSeekKey);
+els.keyModalPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") els.keyModalKey.focus();
+});
+els.keyModalKey.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") saveDeepSeekKey();
+});
+
+// --- AI news panel collapse ---
+const NEWS_COLLAPSE_KEY = "transportfunds.news.collapsed";
+function loadNewsCollapsed() {
+  return localStorage.getItem(NEWS_COLLAPSE_KEY) === "1";
+}
+function applyNewsCollapsed() {
+  if (!els.newsPanel || !els.newsToggle) return;
+  if (loadNewsCollapsed()) {
+    els.newsPanel.classList.add("collapsed");
+    els.newsToggle.setAttribute("aria-expanded", "false");
+  } else {
+    els.newsPanel.classList.remove("collapsed");
+    els.newsToggle.setAttribute("aria-expanded", "true");
+  }
+}
+els.newsToggle.addEventListener("click", () => {
+  const next = !els.newsPanel.classList.contains("collapsed");
+  els.newsPanel.classList.toggle("collapsed", next);
+  els.newsToggle.setAttribute("aria-expanded", String(!next));
+  localStorage.setItem(NEWS_COLLAPSE_KEY, next ? "1" : "0");
+});
+applyNewsCollapsed();
+
 els.addPersonBtn.addEventListener("click", addPerson);
 els.newPerson.addEventListener("keydown", (e) => {
   if (e.key === "Enter") addPerson();

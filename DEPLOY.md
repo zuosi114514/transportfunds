@@ -1,4 +1,4 @@
-# 车费分摊 · 部署与管理指南
+# ♿冲刺♿ · 部署与管理指南
 
 ## 当前线上信息
 
@@ -9,6 +9,7 @@
 | 管理员口令 | `heartunderblade`（登录后可编辑） |
 | 网页托管 | Cloudflare Pages（项目名 `transportfunds`） |
 | 数据存储 | Supabase 表 `app_state`（所有人共用一份） |
+| AI 日报 | Cloudflare Pages Function `/api/ai-news`，每天 8 点后抓取，缓存于 Supabase |
 | 代码仓库 | https://github.com/zuosi114514/transportfunds |
 
 发给同伴时只需提供：**网址**。所有人打开链接即可查看车费数据；如需编辑，点右上角「管理员登录」并输入**管理员口令**。连续 5 次输错口令将锁定 30 分钟。
@@ -76,9 +77,42 @@ npm run deploy
 > ```sql
 > alter table public.app_state add column if not exists history jsonb not null default '[]'::jsonb;
 > alter table public.app_state add column if not exists last_auto_settle text not null default '';
+> alter table public.app_state add column if not exists ai_news jsonb default null;
 > ```
 >
-> 执行前历史记录和自动结算月份只在当前会话内有效；执行后才会持久化到云端，所有人都能看到。
+> 执行前历史记录和自动结算月份只在当前会话内有效；执行后才会持久化到云端，所有人都能看到。`ai_news` 列用于缓存 AI 日报，未加列时日报仍可在当前会话显示，但不会跨用户共享。
+
+### 7. AI 日报功能
+
+页面底部「AI 日报」栏每天早上 8 点后自动抓取一次 AI 领域最新动态（新模型、新工具、新技术），由 Cloudflare Pages Function 调用 DeepSeek API 生成，结果缓存到 Supabase `app_state.ai_news` 列，所有用户共享同一份。新闻按分类（新模型 / 新工具 / 研究突破 / 开源项目 / 行业动态）分组展示，每条新闻附可靠来源链接（官方博客/论文/GitHub 等）。
+
+**收起/展开**：AI 日报栏标题右侧有「收起/展开」按钮，点击可折叠整个模块。状态保存在浏览器 `localStorage`，刷新后保持。
+
+**抓取频率**：每天最多调用 DeepSeek 1 次。8 点后第一个访问者触发抓取，之后命中缓存，全天不再调用 DeepSeek。月度约 30 次，远低于免费额度。
+
+**管理员手动更新**：管理员登录后，AI 日报栏右上角出现「更新新闻」按钮，点击可强制重新抓取（无视缓存）。
+
+**管理员更新 DeepSeek API Key**：管理员登录后，AI 日报栏右上角有「DeepSeek Key」按钮，点击后输入管理员口令 + 新 Key 即可保存。Key 保存在 Supabase `app_state.deepseek_api_key` 列，服务端优先使用此值，若为空则回退到部署时的环境变量 `DEEPSEEK_API_KEY`。留空保存则恢复使用环境变量。
+
+**首次启用步骤**：
+
+1. 在 [Supabase SQL Editor](https://supabase.com/dashboard/project/nreyuviaobqhobppotfa/sql/new) 执行：
+   ```sql
+   alter table public.app_state add column if not exists ai_news jsonb default null;
+   alter table public.app_state add column if not exists deepseek_api_key text default null;
+   ```
+2. 在 [Cloudflare Dashboard](https://dash.cloudflare.com) → Pages → `transportfunds` → **Settings** → **Environment variables** 中添加（**Production** 和 **Preview** 都加）：
+   - `DEEPSEEK_API_KEY` — DeepSeek API 密钥（在 [platform.deepseek.com](https://platform.deepseek.com) 申请，也可不设此变量，登录后用「DeepSeek Key」按钮在网页上设置）
+   - `ADMIN_PASSWORD` — `heartunderblade`（服务端验证管理员身份用，与 `VITE_ADMIN_PASSWORD` 保持一致）
+   - `SUPABASE_URL` — `https://nreyuviaobqhobppotfa.supabase.co`
+   - `SUPABASE_ANON_KEY` — `sb_publishable_w5w3BaIjciCZKIlgiGMFsg_qYMSrbX-`
+3. 运行 `npm run deploy` 重新部署。
+
+**注意**：上述四个变量**不要**以 `VITE_` 开头——它们只在服务端（Pages Function）使用，不能注入到前端，否则会暴露密钥。
+
+**DeepSeek 用量**：新账户赠送 500 万 token，单次日报约 1-2 千 token，足够用数年。
+
+**手动清空缓存重新抓取**：在 Supabase Dashboard → Table Editor → `app_state` → 把 `ai_news` 列清空（设为 NULL），下次有人打开页面就会重新抓取。
 
 ### 5. 暂时下线网站
 
@@ -166,6 +200,15 @@ npm run deploy
 
 **每月 31 号自动清空了行程，但我没点过？**
 → 这是自动结算功能。在有 31 天的月份的 31 号，系统会自动保存一份结算快照并清空行程，保留成员。可在「历史结算记录」查看结算详情。
+
+**AI 日报显示「暂无法抓取」或「正在抓取」一直转？**
+→ 检查 Cloudflare Pages 环境变量是否设置了 `DEEPSEEK_API_KEY` / `SUPABASE_URL` / `SUPABASE_ANON_KEY`；检查 Supabase 是否已添加 `ai_news` 列；DeepSeek API 余额是否充足。可在浏览器开发者工具 Network 面板查看 `/api/ai-news` 请求的具体错误。
+
+**AI 日报内容好像不是今天的？**
+→ DeepSeek API 基于模型训练数据生成，并非实时联网搜索。内容反映模型对近期 AI 领域的认知，可能不完全等同于当天真实事件。日报每天 8 点后刷新一次。
+
+**AI 日报里的链接打不开或不是真实页面？**
+→ DeepSeek 生成的 URL 优先指向官方域名（如 openai.com、github.com、arxiv.org），但具体路径可能是模型推测的，不一定能访问。点击来源标签会跳转到对应官网。如需真实新闻源，可手动搜索标题。
 
 **口令安全说明**
 共享口令适合熟人小范围使用，能挡住随便点开链接的人误改数据，不是银行级权限。**查看无需口令**，只有编辑需要。不要把口令发到公开群；定期更换更安全。连续输错锁定机制可防止暴力破解。
