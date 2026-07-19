@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "dotenv": "^17.4.2",
+    "jszip": "^3.10.1",
     "vite": "^6.3.5"
   }
 }
