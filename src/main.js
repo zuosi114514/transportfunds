@@ -554,6 +554,10 @@ els.loginBtn.addEventListener("click", tryLogin);
 els.passwordInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") tryLogin();
 });
+// Auto-submit shortly after paste so users can paste the password and log in directly.
+els.passwordInput.addEventListener("paste", () => {
+  setTimeout(tryLogin, 50);
+});
 els.logoutBtn.addEventListener("click", logout);
 els.addPersonBtn.addEventListener("click", addPerson);
 els.newPerson.addEventListener("keydown", (e) => {
